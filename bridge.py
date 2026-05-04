@@ -869,20 +869,24 @@ def handle_command(stripped, from_user, user_config, sessions,
     if stripped == "/help":
         return True, (
             "[WeChat-Claude-Bridge]\n"
-            "/help                   — 显示此帮助\n"
-            "/cwd <path>             — 设置工作目录\n"
-            "/pwd                    — 查看当前工作目录\n"
+            "\n"
+            "[ Claude Code ]\n"
             "/new <name>             — 新建命名会话\n"
             "/list                   — 列出所有会话\n"
             "/switch <name>          — 切换活跃会话\n"
             "/clear                  — 清除当前会话\n"
-            "/status                 — 查看 bridge 运行状态\n"
             "/model <opus|sonnet|haiku> — 切换模型\n"
             "/mode <auto|ask>        — 切换权限模式\n"
+            "/cwd <path>             — 设置工作目录\n"
+            "/pwd                    — 查看当前工作目录\n"
+            "\n"
+            "[ 系统 & 工具 ]\n"
             "/exec <shell命令>        — 在工作目录执行命令\n"
+            "/status                 — 查看 bridge 运行状态\n"
+            "/watchdog <cmd>         — 系统监控（CPU/内存/磁盘）\n"
             "/remind <时间> <消息>    — 设置提醒\n"
             "/cleanup <target>       — 清理缓存\n"
-            "/watchdog <cmd>         — 系统监控（CPU/内存/磁盘）\n"
+            "/help                   — 显示此帮助\n"
         )
 
     # ---- /cwd /dir /pwd ----
@@ -1698,4 +1702,21 @@ if __name__ == "__main__":
 
     sessions = load_user_sessions()
     user_config = load_user_config()
+
+    # 上线通知：向所有历史用户发送上线消息
+    known_users = set()
+    for uid in list(sessions.keys()) + list(user_config.keys()):
+        known_users.add(uid)
+    if known_users:
+        token = session["token"]
+        base_url = session["baseUrl"]
+        print(f"[START] 通知 {len(known_users)} 位历史用户 bridge 已上线...")
+        for uid in known_users:
+            try:
+                send_message(base_url, token, uid,
+                             "[Claude Code] bridge 已上线，服务已恢复。")
+                print(f"   [START] 已通知 {uid}")
+            except Exception as e:
+                print(f"   [WARN] 通知 {uid} 失败: {e}")
+
     main_loop(session, sessions, user_config)
