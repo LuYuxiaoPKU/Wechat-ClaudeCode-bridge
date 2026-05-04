@@ -341,6 +341,8 @@ def send_typing(base_url, token, to_user_id):
 
 
 def send_message(base_url, token, to_user_id, text, context_token=""):
+    # WeChat Desktop 需要 \r\n 换行
+    text = text.replace("\r\n", "\n").replace("\n", "\r\n")
     client_id = f"wcb-{uuid.uuid4()}"
     api_post(
         base_url, "ilink/bot/sendmessage",
@@ -874,24 +876,22 @@ def handle_command(stripped, from_user, user_config, sessions,
     if stripped == "/help":
         return True, (
             "[WeChat-Claude-Bridge]\n"
-            "\n"
-            "[ Claude Code ]\n"
-            "/new <name>             — 新建命名会话\n"
-            "/list                   — 列出所有会话\n"
-            "/switch <name>          — 切换活跃会话\n"
-            "/clear                  — 清除当前会话\n"
-            "/model <opus|sonnet|haiku> — 切换模型\n"
-            "/mode <auto|ask>        — 切换权限模式\n"
-            "/cwd <path>             — 设置工作目录\n"
-            "/pwd                    — 查看当前工作目录\n"
-            "\n"
-            "[ 系统 & 工具 ]\n"
-            "/exec <shell命令>        — 在工作目录执行命令\n"
-            "/status                 — 查看 bridge 运行状态\n"
-            "/watchdog <cmd>         — 系统监控（CPU/内存/磁盘）\n"
-            "/remind <时间> <消息>    — 设置提醒\n"
-            "/cleanup <target>       — 清理缓存\n"
-            "/help                   — 显示此帮助\n"
+            " # Bridge Commands\n"
+            "  /cwd <path>         设置工作目录\n"
+            "  /pwd                查看工作目录\n"
+            "  /new <name>         新建命名会话\n"
+            "  /list               列出所有会话\n"
+            "  /switch <name>      切换活跃会话\n"
+            "  /clear              清除当前会话\n"
+            "  /model <o|s|h>      切换模型(opus/sonnet/haiku)\n"
+            "  /mode <auto|ask>    切换权限模式\n"
+            "  /exec <cmd>         执行shell命令\n"
+            "  /status             查看运行状态\n"
+            "  /watchdog <cmd>     系统监控\n"
+            "  /remind <t> <msg>   设置提醒\n"
+            "  /cleanup <target>   清理缓存\n"
+            "  /help               显示此帮助\n"
+            " //<cmd>              绕过桥接，直接发送/cmd给Claude"
         )
 
     # ---- /cwd /dir /pwd ----
@@ -1502,6 +1502,11 @@ def main_loop(session, sessions, user_config):
                     continue
 
                 stripped = text.strip()
+
+                # ---- //逃逸：将 /cmd 原样发送给 Claude ----
+                if stripped.startswith("//"):
+                    text = stripped[1:]  # 去掉一个 /，变成 /cmd
+
                 cfg = user_config.setdefault(from_user, {})
 
                 # ---- 待处理的权限确认 ----
