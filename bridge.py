@@ -1727,6 +1727,13 @@ def main_loop(session, sessions, user_config):
                     continue
 
                 # ---- /remind ----
+                if stripped == "/remind":
+                    send_message(base_url, token, from_user,
+                                 "[USAGE] /remind <时间> <消息>\n"
+                                 "  30m 检查部署      30 分钟后提醒\n"
+                                 "  9:00 每日站会     每天 9:00 提醒\n"
+                                 "  2h 开会            2 小时后提醒", ctx)
+                    continue
                 if stripped.startswith("/remind "):
                     parts = stripped[len("/remind "):].strip()
                     try:
