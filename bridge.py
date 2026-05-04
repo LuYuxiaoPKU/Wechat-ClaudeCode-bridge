@@ -592,13 +592,17 @@ def collect_metrics(disk_paths=None):
     return metrics
 
 
-def _progress_bar(pct, width=10, symbol="█"):
-    """生成 ASCII 进度条: [████████░░░░░░] 80%"""
+def _progress_bar(pct, width=12):
+    """生成 ASCII 进度条: [====>       ] 80%"""
     if pct < 0:
         return f"[{'?' * width}] ???%"
     filled = min(int(pct / 100 * width), width)
-    empty = width - filled
-    bar = symbol * filled + "░" * empty
+    if filled == width:
+        bar = "=" * width
+    elif filled == 0:
+        bar = " " * width
+    else:
+        bar = "=" * (filled - 1) + ">" + " " * (width - filled)
     return f"[{bar}] {pct:.0f}%"
 
 
