@@ -873,13 +873,28 @@ def handle_command(stripped, from_user, user_config, sessions,
     # ---- /help ----
     if stripped == "/help":
         return True, (
-            "[WeChat-Claude-Bridge]\n"
-            "/cwd <p> 设置目录 | /pwd 查看目录\n"
-            "/new <n> 新建会话 | /list 列出 | /switch <n> 切换 | /clear 清除\n"
-            "/model <o|s|h> 切模型 | /mode <auto|ask> 权限模式\n"
-            "/exec <cmd> 执行命令 | /status 状态 | /watchdog <c> 监控\n"
-            "/remind <t> <m> 提醒 | /cleanup <t> 清理缓存 | /help 帮助\n"
-            "//<cmd> 逃逸，直接发 /cmd 给 Claude"
+            "[ WeChat-Claude-Bridge ]\n"
+            "\n"
+            "[ 会话 & 模型 ]\n"
+            "  /new <name>              新建命名会话\n"
+            "  /list                    列出所有会话\n"
+            "  /switch <name>           切换活跃会话\n"
+            "  /clear                   清除当前会话\n"
+            "  /model <opus|sonnet|haiku>  切换模型\n"
+            "  /mode <auto|ask>         权限模式\n"
+            "\n"
+            "[ 工作目录 ]\n"
+            "  /cwd <path>              设置工作目录\n"
+            "  /pwd                     查看当前目录\n"
+            "\n"
+            "[ 系统 & 工具 ]\n"
+            "  /exec <shell cmd>        在工作目录执行命令\n"
+            "  /status                  查看 bridge 运行状态\n"
+            "  /watchdog <cmd>          系统监控 (CPU/内存/磁盘)\n"
+            "  /remind <时间> <消息>     设置定时提醒\n"
+            "  /cleanup <target>        清理缓存 (media/history/all)\n"
+            "\n"
+            "//<cmd> 绕过桥接，将 /cmd 直接发送给 Claude Code CLI"
         )
 
     # ---- /cwd /dir /pwd ----
