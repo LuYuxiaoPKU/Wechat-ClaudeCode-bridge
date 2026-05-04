@@ -431,10 +431,38 @@ def _read_meminfo():
     return total, available
 
 
+def _detect_disks():
+    """从 /proc/mounts 自动检测真实磁盘挂载点，排除伪文件系统"""
+    pseudo_fs = {
+        "proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup",
+        "cgroup2", "pstore", "bpf", "fusectl", "securityfs", "debugfs",
+        "tracefs", "configfs", "hugetlbfs", "mqueue", "ramfs", "overlay",
+    }
+    skip_prefixes = ("/sys/", "/proc/", "/dev/", "/run/", "/snap/")
+    disks = []
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                dev, mp, fs_type = parts[0], parts[1], parts[2]
+                if fs_type in pseudo_fs:
+                    continue
+                if any(mp.startswith(p) for p in skip_prefixes):
+                    continue
+                # 设备路径以 /dev/ 开头
+                if dev.startswith("/dev/"):
+                    disks.append(mp)
+    except Exception:
+        pass
+    return sorted(set(disks)) if disks else ["/"]
+
+
 def collect_metrics(disk_paths=None):
     """采集系统指标，返回 dict"""
     if disk_paths is None:
-        disk_paths = ["/"]
+        disk_paths = _detect_disks()
     metrics = {"timestamp": time.time(), "alerts": []}
 
     # CPU
@@ -473,6 +501,16 @@ def collect_metrics(disk_paths=None):
     return metrics
 
 
+def _progress_bar(pct, width=10, symbol="█"):
+    """生成 ASCII 进度条: [████████░░░░░░] 80%"""
+    if pct < 0:
+        return f"[{'?' * width}] ???%"
+    filled = min(int(pct / 100 * width), width)
+    empty = width - filled
+    bar = symbol * filled + "░" * empty
+    return f"[{bar}] {pct:.0f}%"
+
+
 def check_watchdog(user_id=None):
     """检查看门狗阈值，返回警报文本列表"""
     config = load_watchdog_config()
@@ -486,24 +524,24 @@ def check_watchdog(user_id=None):
 
     cpu_thresh = thresholds.get("cpu_percent", 80)
     if metrics["cpu_percent"] > cpu_thresh:
-        load_str = f"{metrics['cpu_load']} ({metrics['cpu_percent']}%)"
-        alerts.append(f"[CPU] {load_str} > 阈值 {cpu_thresh}%")
+        bar = _progress_bar(metrics["cpu_percent"])
+        alerts.append(f"CPU  {bar}  阈值 {cpu_thresh}%")
 
     mem_thresh = thresholds.get("memory_percent", 90)
     if metrics["memory_percent"] > mem_thresh:
+        bar = _progress_bar(metrics["memory_percent"])
         alerts.append(
-            f"[MEM] {metrics.get('memory_used_gb','?')}G/"
-            f"{metrics.get('memory_total_gb','?')}G ({metrics['memory_percent']}%)"
-            f" > 阈值 {mem_thresh}%"
+            f"MEM  {bar}  "
+            f"{metrics.get('memory_used_gb','?')}/{metrics.get('memory_total_gb','?')}G"
         )
 
     disk_thresh = thresholds.get("disk_percent", 90)
     for path, info in metrics.get("disks", {}).items():
         if "percent" in info and info["percent"] > disk_thresh:
+            bar = _progress_bar(info["percent"])
             alerts.append(
-                f"[DISK] {path} {info['used_gb']}G/"
-                f"{info['total_gb']}G ({info['percent']}%)"
-                f" > 阈值 {disk_thresh}%"
+                f"DISK {path}  {bar}  "
+                f"{info['used_gb']}/{info['total_gb']}G"
             )
 
     # 更新最后检查时间
@@ -520,7 +558,7 @@ def load_watchdog_config():
     return {
         "enabled": False,
         "interval_minutes": 5,
-        "disk_paths": ["/"],
+        "disk_paths": _detect_disks(),
         "alert_cooldown_minutes": 30,
         "thresholds": {"cpu_percent": 80, "memory_percent": 90, "disk_percent": 90},
         "alert_user_id": None,
@@ -955,20 +993,22 @@ def handle_command(stripped, from_user, user_config, sessions,
                 f"CPU 阈值: {wc['thresholds']['cpu_percent']}%",
                 f"内存阈值: {wc['thresholds']['memory_percent']}%",
                 f"磁盘阈值: {wc['thresholds']['disk_percent']}%",
-                f"磁盘路径: {', '.join(wc.get('disk_paths', ['/']))}",
+                f"监控磁盘: {', '.join(wc.get('disk_paths', _detect_disks()))}",
                 f"告警冷却: {wc.get('alert_cooldown_minutes', 30)} 分钟",
             ]
             if init_alerts:
-                status_lines.append("\n[首次检查告警]\n" + "\n".join(init_alerts))
+                status_lines.append("\n[首次检查 ALERT]\n" + "\n".join(init_alerts))
             else:
                 m = wc.get("last_metrics", {})
                 if m:
-                    status_lines.append(
-                        f"\n[首次检查 OK] "
-                        f"CPU {m.get('cpu_percent','?')}% | "
-                        f"MEM {m.get('memory_percent','?')}% | "
-                        f"DISK {list(m.get('disks',{}).values())[0].get('percent','?') if m.get('disks') else '?'}%"
-                    )
+                    status_lines.append("[首次检查 OK]")
+                    cpu_pct = m.get('cpu_percent', -1)
+                    status_lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
+                    mem_pct = m.get('memory_percent', -1)
+                    status_lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
+                    for p, i in m.get("disks", {}).items():
+                        dp = i.get("percent", -1)
+                        status_lines.append(f"DISK {p}  {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
             return True, "\n".join(status_lines)
 
         if sub == "stop":
@@ -979,34 +1019,44 @@ def handle_command(stripped, from_user, user_config, sessions,
         if sub == "now":
             _, alerts = check_watchdog()
             if alerts:
-                return True, "[WATCHDOG]\n" + "\n".join(alerts)
+                return True, "[WATCHDOG ALERT]\n" + "\n".join(alerts)
             m = wc.get("last_metrics", {})
             if m:
-                lines = [
-                    f"CPU:  {m.get('cpu_load','?')} load / {m.get('cpu_percent','?')}%",
-                    f"MEM:  {m.get('memory_percent','?')}%",
-                ]
+                lines = ["[WATCHDOG OK]"]
+                cpu_pct = m.get('cpu_percent', -1)
+                lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
+                mem_pct = m.get('memory_percent', -1)
+                lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                 for p, i in m.get("disks", {}).items():
-                    lines.append(f"DISK: {p} {i.get('percent','?')}%")
-                lines.append("[OK] 所有指标正常")
-                return True, "[WATCHDOG OK]\n" + "\n".join(lines)
+                    dp = i.get("percent", -1)
+                    lines.append(f"DISK {p}  {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                return True, "\n".join(lines)
             return True, "[WATCHDOG] 暂无数据，等待首次检查"
 
         if sub == "status":
             if not wc.get("enabled"):
                 return True, "[WATCHDOG] 未启动（/watchdog start）"
             m = wc.get("last_metrics")
-            lines = [f"状态: 运行中 | 间隔: {wc.get('interval_minutes',5)}min"]
+            lines = [
+                "[WATCHDOG]",
+                f"状态: 运行中 | 间隔: {wc.get('interval_minutes',5)}min"
+            ]
             ts = wc.get("last_check")
             if ts:
                 ago = int(time.time() - ts)
-                lines.append(f"上次检查: {ago}s 前")
+                lines.append(f"上次: {ago}s 前")
             if m:
-                lines.append(f"CPU:  load={m.get('cpu_load','?')} | {m.get('cpu_percent','?')}%")
-                lines.append(f"MEM:  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G = {m.get('memory_percent','?')}%")
+                cpu_pct = m.get('cpu_percent', -1)
+                lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
+                mem_pct = m.get('memory_percent', -1)
+                lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                 for p, i in m.get("disks", {}).items():
-                    lines.append(f"DISK: {p} {i.get('used_gb','?')}/{i.get('total_gb','?')}G = {i.get('percent','?')}%")
-            return True, "[WATCHDOG]\n" + "\n".join(lines)
+                    dp = i.get("percent", -1)
+                    lines.append(f"DISK {p}  {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                lines.append(f"阈值: CPU>{wc['thresholds']['cpu_percent']}% "
+                             f"MEM>{wc['thresholds']['memory_percent']}% "
+                             f"DISK>{wc['thresholds']['disk_percent']}%")
+            return True, "\n".join(lines)
 
         if sub.startswith("config "):
             args = sub[len("config "):].strip().split()
