@@ -341,8 +341,6 @@ def send_typing(base_url, token, to_user_id):
 
 
 def send_message(base_url, token, to_user_id, text, context_token=""):
-    # WeChat Desktop 需要 \r\n 换行
-    text = text.replace("\r\n", "\n").replace("\n", "\r\n")
     client_id = f"wcb-{uuid.uuid4()}"
     api_post(
         base_url, "ilink/bot/sendmessage",
@@ -876,22 +874,12 @@ def handle_command(stripped, from_user, user_config, sessions,
     if stripped == "/help":
         return True, (
             "[WeChat-Claude-Bridge]\n"
-            " # Bridge Commands\n"
-            "  /cwd <path>         设置工作目录\n"
-            "  /pwd                查看工作目录\n"
-            "  /new <name>         新建命名会话\n"
-            "  /list               列出所有会话\n"
-            "  /switch <name>      切换活跃会话\n"
-            "  /clear              清除当前会话\n"
-            "  /model <o|s|h>      切换模型(opus/sonnet/haiku)\n"
-            "  /mode <auto|ask>    切换权限模式\n"
-            "  /exec <cmd>         执行shell命令\n"
-            "  /status             查看运行状态\n"
-            "  /watchdog <cmd>     系统监控\n"
-            "  /remind <t> <msg>   设置提醒\n"
-            "  /cleanup <target>   清理缓存\n"
-            "  /help               显示此帮助\n"
-            " //<cmd>              绕过桥接，直接发送/cmd给Claude"
+            "/cwd <p> 设置目录 | /pwd 查看目录\n"
+            "/new <n> 新建会话 | /list 列出 | /switch <n> 切换 | /clear 清除\n"
+            "/model <o|s|h> 切模型 | /mode <auto|ask> 权限模式\n"
+            "/exec <cmd> 执行命令 | /status 状态 | /watchdog <c> 监控\n"
+            "/remind <t> <m> 提醒 | /cleanup <t> 清理缓存 | /help 帮助\n"
+            "//<cmd> 逃逸，直接发 /cmd 给 Claude"
         )
 
     # ---- /cwd /dir /pwd ----
