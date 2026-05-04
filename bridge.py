@@ -683,7 +683,7 @@ def watchdog_thread_fn(base_url, token):
                         last_alert = cfg.get("last_alert", 0)
                         cooldown = cfg.get("alert_cooldown_minutes", 30) * 60
                         if now - last_alert >= cooldown:
-                            msg = "[WATCHDOG ALERT]\n" + "\n".join(alerts)
+                            msg = "[WATCHDOG ALERT]\n```\n" + "\n".join(alerts) + "\n```"
                             send_message(base_url, token, cfg["alert_user_id"], msg)
                             cfg["last_alert"] = now
                             save_watchdog_config(cfg)
@@ -875,12 +875,13 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, (
             "[ WeChat-Claude-Bridge ]\n"
             "\n"
+            "```\n"
             "[ 会话 & 模型 ]\n"
             "  /new <name>              新建命名会话\n"
             "  /list                    列出所有会话\n"
             "  /switch <name>           切换活跃会话\n"
             "  /clear                   清除当前会话\n"
-            "  /model <opus|sonnet|haiku>  切换模型\n"
+            "  /model <opus|sonnet|haiku> 切换模型\n"
             "  /mode <auto|ask>         权限模式\n"
             "\n"
             "[ 工作目录 ]\n"
@@ -888,13 +889,13 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /pwd                     查看当前目录\n"
             "\n"
             "[ 系统 & 工具 ]\n"
-            "  /exec <shell cmd>        在工作目录执行命令\n"
-            "  /status                  查看 bridge 运行状态\n"
-            "  /watchdog <cmd>          系统监控 (CPU/内存/磁盘)\n"
-            "  /remind <时间> <消息>     设置定时提醒\n"
-            "  /cleanup <target>        清理缓存 (media/history/all)\n"
-            "\n"
-            "//<cmd> 绕过桥接，将 /cmd 直接发送给 Claude Code CLI"
+            "  /exec <shell cmd>        执行命令\n"
+            "  /status                  运行状态\n"
+            "  /watchdog <cmd>          系统监控\n"
+            "  /remind <时间> <消息>     定时提醒\n"
+            "  /cleanup <target>        清理缓存\n"
+            "```\n"
+            "//<cmd>  绕过桥接，直接发送给 Claude Code CLI"
         )
 
     # ---- /cwd /dir /pwd ----
@@ -1099,18 +1100,20 @@ def handle_command(stripped, from_user, user_config, sessions,
                 f"告警冷却: {wc.get('alert_cooldown_minutes', 30)} 分钟",
             ]
             if init_alerts:
-                status_lines.append("\n[首次检查 ALERT]\n" + "\n".join(init_alerts))
+                status_lines.append("\n[首次检查 ALERT]\n```\n" + "\n".join(init_alerts) + "\n```")
             else:
                 m = wc.get("last_metrics", {})
                 if m:
                     status_lines.append("[首次检查 OK]")
+                    status_lines.append("```")
                     cpu_pct = m.get('cpu_percent', -1)
                     status_lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
                     mem_pct = m.get('memory_percent', -1)
                     status_lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                     for p, i in m.get("disks", {}).items():
                         dp = i.get("percent", -1)
-                        status_lines.append(f"DISK {p}  {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                        status_lines.append(f"DISK {p:<8} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                    status_lines.append("```")
             return True, "\n".join(status_lines)
 
         if sub == "stop":
@@ -1121,17 +1124,18 @@ def handle_command(stripped, from_user, user_config, sessions,
         if sub == "now":
             _, alerts = check_watchdog()
             if alerts:
-                return True, "[WATCHDOG ALERT]\n" + "\n".join(alerts)
+                return True, "[WATCHDOG ALERT]\n```\n" + "\n".join(alerts) + "\n```"
             m = wc.get("last_metrics", {})
             if m:
-                lines = ["[WATCHDOG OK]"]
+                lines = ["[WATCHDOG OK]", "```"]
                 cpu_pct = m.get('cpu_percent', -1)
                 lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
                 mem_pct = m.get('memory_percent', -1)
                 lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                 for p, i in m.get("disks", {}).items():
                     dp = i.get("percent", -1)
-                    lines.append(f"DISK {p}  {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                    lines.append(f"DISK {p:<8} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                lines.append("```")
                 return True, "\n".join(lines)
             return True, "[WATCHDOG] 暂无数据，等待首次检查"
 
@@ -1148,13 +1152,15 @@ def handle_command(stripped, from_user, user_config, sessions,
                 ago = int(time.time() - ts)
                 lines.append(f"上次: {ago}s 前")
             if m:
+                lines.append("```")
                 cpu_pct = m.get('cpu_percent', -1)
                 lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
                 mem_pct = m.get('memory_percent', -1)
                 lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                 for p, i in m.get("disks", {}).items():
                     dp = i.get("percent", -1)
-                    lines.append(f"DISK {p}  {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                    lines.append(f"DISK {p:<8} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                lines.append("```")
                 lines.append(f"阈值: CPU>{wc['thresholds']['cpu_percent']}% "
                              f"MEM>{wc['thresholds']['memory_percent']}% "
                              f"DISK>{wc['thresholds']['disk_percent']}%")
