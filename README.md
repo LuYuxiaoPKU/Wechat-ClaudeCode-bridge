@@ -7,34 +7,30 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 > Built with **Claude Code**, powered by **DeepSeek V4 Pro[1m]**
 
 ```
-                            Internet                    Local Machine
-  .-------------------.                  .-----------------------------------------.
-  |     WeChat iOS    |   iLink API      |           bridge.py (~1800 lines)        |
-  |  (ClawBot Plugin) |<================>|                                         |
-  |                   |  long polling    |  .---------.   .---------.   .---------. |
-  |   [/help]         |                  |  | Thread 1 |   | Thread 2 |   | Thread 3| |
-  |   [/cwd /pwd]     |   HTTPS JSON     |  | 主循环    |   | Thread   |   | Remind  | |
-  |   [/new /switch]  |<---------------->|  | 收消息    |   | Pool x5  |   | Thread  | |
-  |   [/cpu /mem]     |  sendmessage     |  | 分发命令  |   | Claude   |   | 定时器  | |
-  |   [/watchdog ...] |                  |  '---------'   | 调用     |   '---------' |
-  |   [自然语言]       |                  |       |        '---------'               |
-  '-------------------'                  |       |             |                     |
-                                         |       v             v                     |
-  .-------------------.                  |  .---------.   .---------.               |
-  |   External Systems |  HTTP POST      |  | Web :9876|   | Claude  |               |
-  |  (GH Actions, CI) |<................|  | /health  |   | Code    |               |
-  |                   |  /push          |  | /stats   |   | CLI     |               |
-  '-------------------'                  |  | /push    |   | (node)  |               |
-                                         |  '---------'   '---------'               |
-  .-------------------.                  |       |              |                    |
-  |   Data & State     |                 |       v              v                    |
-  | ~/.wechat-claude-  |<................|  .------------------------------.        |
-  |   bridge/          |                  |  | token.json  sessions.json     |       |
-  |   token.json       |                  |  | config.json watchdog.json     |       |
-  |   history/*.md     |                  |  | reminders.json  bridge.log   |       |
-  |   media/           |                  |  | history/*.md  terms_accepted  |       |
-  '-------------------'                  |  '------------------------------'        |
-                                         '-----------------------------------------'
+                        iLink API (HTTPS long polling)
+  WeChat             <==================================>  bridge.py   <--->  Claude Code CLI
+ (ClawBot)             sendmessage / sendtyping          (~1800 lines)         (node)
+
+                                                             |
+  External Systems      HTTP POST            .---------------+---------------.
+ (GitHub Actions, CI) <--------------------> |               |               |
+                         /push               v               v               v
+                                        ThreadPool        Web :9876      Watchdog
+                                          (x5)        /health /stats    Remind
+                                           |           /push
+                                           v
+                                    +-----------------+
+                                    |   Data & State  |
+                                    |   token.json     |
+                                    |   sessions.json  |
+                                    |   user_config    |
+                                    |   watchdog.json  |
+                                    |   reminders.json |
+                                    |   bridge.log     |
+                                    |   history/*.md   |
+                                    |   media/         |
+                                    +-----------------+
+                                  ~/.wechat-claude-bridge/
 ```
 
 ## Prerequisites / 前提
