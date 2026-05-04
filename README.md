@@ -7,16 +7,34 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 > Built with **Claude Code**, powered by **DeepSeek V4 Pro[1m]**
 
 ```
-+--------+     iLink API      +------------------+   ThreadPool  +-------------+
-|  WeChat | <===============> | wechat-claude-   | <===========> | Claude      |
-| (iOS)   |    long polling   | bridge (Python)  |  subprocess   | Code CLI    |
-+--------+                    +------------------+               +-------------+
-                                      |  |
-                                      |  | Web console (:9876)
-                                      v  v
-                               +-------------+  +-------------+
-                               | Per-user cwd|  | Logs/History|
-                               +-------------+  +-------------+
+                            Internet                    Local Machine
+  .-------------------.                  .-----------------------------------------.
+  |     WeChat iOS    |   iLink API      |           bridge.py (~1800 lines)        |
+  |  (ClawBot Plugin) |<================>|                                         |
+  |                   |  long polling    |  .---------.   .---------.   .---------. |
+  |   [/help]         |                  |  | Thread 1 |   | Thread 2 |   | Thread 3| |
+  |   [/cwd /pwd]     |   HTTPS JSON     |  | 主循环    |   | Thread   |   | Remind  | |
+  |   [/new /switch]  |<---------------->|  | 收消息    |   | Pool x5  |   | Thread  | |
+  |   [/cpu /mem]     |  sendmessage     |  | 分发命令  |   | Claude   |   | 定时器  | |
+  |   [/watchdog ...] |                  |  '---------'   | 调用     |   '---------' |
+  |   [自然语言]       |                  |       |        '---------'               |
+  '-------------------'                  |       |             |                     |
+                                         |       v             v                     |
+  .-------------------.                  |  .---------.   .---------.               |
+  |   External Systems |  HTTP POST      |  | Web :9876|   | Claude  |               |
+  |  (GH Actions, CI) |<................|  | /health  |   | Code    |               |
+  |                   |  /push          |  | /stats   |   | CLI     |               |
+  '-------------------'                  |  | /push    |   | (node)  |               |
+                                         |  '---------'   '---------'               |
+  .-------------------.                  |       |              |                    |
+  |   Data & State     |                 |       v              v                    |
+  | ~/.wechat-claude-  |<................|  .------------------------------.        |
+  |   bridge/          |                  |  | token.json  sessions.json     |       |
+  |   token.json       |                  |  | config.json watchdog.json     |       |
+  |   history/*.md     |                  |  | reminders.json  bridge.log   |       |
+  |   media/           |                  |  | history/*.md  terms_accepted  |       |
+  '-------------------'                  |  '------------------------------'        |
+                                         '-----------------------------------------'
 ```
 
 ## Prerequisites / 前提
@@ -132,18 +150,43 @@ WEB_PORT = 9876       # Web 控制台端口
 
 ```
 bridge.py (~1800 lines)
-├── check_terms()         GPLv3 条款确认
-├── login()               iLink 扫码登录
-├── get_updates()         长轮询收消息
-├── send_typing()         "正在输入"状态
-├── handle_command()      内置命令分发（16 个命令）
-├── ask_claude()          Claude CLI 调用 + 会话管理
-│   └── run_claude_stream()  Popen 流式读取 + 权限检测
-├── collect_metrics()     跨平台系统指标采集（psutil + native）
-├── check_watchdog()      阈值检测 + 告警
-├── split_long_text()     长回复拆分
-├── WebHandler            HTTP API（/health /stats /push）
-└── main_loop()           主循环：轮询 → 分发 → 线程池 → 回调
+│
+├── 启动 & 认证
+│   ├── check_terms()          GPLv3 条款确认
+│   ├── login()                iLink 扫码登录
+│   └── /login                 运行时重新登录
+│
+├── 消息收发 (iLink API)
+│   ├── get_updates()          长轮询收消息
+│   ├── send_message()         发送消息
+│   └── send_typing()          "正在输入" 状态
+│
+├── 命令分发
+│   ├── handle_command()       16 个内置命令
+│   ├── /status /remind        内联命令
+│   └── 模糊匹配               未知 /cmd 智能提示
+│
+├── Claude 集成
+│   ├── ask_claude()           会话管理 + 权限检测
+│   └── run_claude_stream()   Popen 流式读取
+│
+├── 系统监控
+│   ├── collect_metrics()      跨平台指标 (psutil/native)
+│   ├── check_watchdog()       阈值检测 + 微信告警
+│   └── /cpu /mem /disk /top  快速查询
+│
+├── 辅助功能
+│   ├── split_long_text()      长消息拆分
+│   ├── _progress_bar()        Unicode 进度条
+│   └── extract_media_url()    图片/文件提取
+│
+├── Web 服务
+│   └── WebHandler             :9876 (/health /stats /push)
+│
+└── 后台线程
+    ├── ThreadPoolExecutor     并发 Claude 调用 (x5)
+    ├── reminder_thread_fn     定时提醒检查
+    └── watchdog_thread_fn     系统监控轮询
 ```
 
 ## Web Console / Web API
