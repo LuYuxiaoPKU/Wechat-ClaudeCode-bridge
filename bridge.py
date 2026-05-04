@@ -889,6 +889,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /mem                     查看内存使用\n"
             "  /disk                    查看磁盘使用\n"
             "  /ls [path]               列出目录内容\n"
+            "  /top [cpu|mem]           查看进程 Top20\n"
             "  /exec <shell cmd>        执行命令\n"
             "  /status                  运行状态\n"
             "  /watchdog <cmd>          系统监控\n"
@@ -993,6 +994,39 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, f"[MODE] 当前权限模式: {m}"
 
     # ---- /exec ----
+    # ---- /top 进程列表 ----
+    if stripped == "/top" or stripped.startswith("/top "):
+        sort_by = stripped[4:].strip().lower() if len(stripped) > 4 else "cpu"
+        if sort_by not in ("cpu", "mem", "memory"):
+            return True, "[USAGE] /top [cpu|mem]  默认按 CPU 排序"
+        if not _HAS_PSUTIL:
+            return True, "[ERR] /top 需要 psutil 库"
+
+        sort_key = "memory_percent" if sort_by in ("mem", "memory") else "cpu_percent"
+        procs = []
+        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+            try:
+                info = p.info
+                if info["cpu_percent"] > 0 or info["memory_percent"] > 0.1:
+                    procs.append(info)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        procs.sort(key=lambda x: x.get(sort_key, 0), reverse=True)
+        procs = procs[:20]
+
+        label = "MEM%" if sort_key == "memory_percent" else "CPU%"
+        lines = [f"```", f"{'PID':>8} {'NAME':<20} {'CPU%':>6} {'MEM%':>6}"]
+        for p in procs:
+            name = (p["name"] or "?")[:20]
+            lines.append(
+                f"{p['pid']:>8} {name:<20} "
+                f"{p['cpu_percent'] or 0:>5.1f} {p['memory_percent'] or 0:>5.1f}"
+            )
+        lines.append(f"```")
+        lines.append(f"排序: {label} | 显示 {len(procs)} 个进程")
+        return True, "\n".join(lines)
+
     # ---- /ls 目录列表 ----
     if stripped == "/ls" or stripped.startswith("/ls "):
         target = stripped[3:].strip() or "."
@@ -1788,7 +1822,7 @@ def main_loop(session, sessions, user_config):
                         "new", "list", "switch", "clear",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog", "login", "ls",
+                        "remind", "cleanup", "watchdog", "login", "ls", "top",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
                     suggestions = []
