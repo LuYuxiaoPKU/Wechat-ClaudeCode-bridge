@@ -4,8 +4,7 @@
 
 Control Claude Code CLI via WeChat messages. Code, debug, and manage files from anywhere using WeChat.
 
-> Written by **Claude Code** (Opus 4.7) + **DeepSeek V4 Pro[1m]**
-> 本项目由 Claude Code + DeepSeek V4 Pro[1m] 编写
+> Built with **Claude Code**, powered by **DeepSeek V4 Pro[1m]**
 
 ```
 +--------+     iLink API      +------------------+   ThreadPool  +-------------+
