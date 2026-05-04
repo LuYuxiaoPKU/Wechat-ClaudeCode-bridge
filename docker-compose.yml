@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  bridge:
+    build: .
+    container_name: wechat-claude-bridge
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LANG=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+
+    volumes:
+      # Bridge 数据持久化（token、session、user_config）
+      - bridge_data:/root/.wechat-claude-bridge
+      # Claude Code 配置（API key 等）
+      - ~/.claude:/root/.claude:ro
+      # ============================================================
+      # 挂载你的项目目录（按需取消注释/修改）
+      # ============================================================
+      # - /path/to/your/project:/projects/my-project
+
+    # 如需首次登录，先运行: docker-compose run --rm bridge python3 bridge.py --login
+    # 扫码完成后 Ctrl+C，再 docker-compose up -d
+
+volumes:
+  bridge_data:
