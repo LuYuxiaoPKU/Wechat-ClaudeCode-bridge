@@ -49,8 +49,8 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 ### 安装
 
 ```bash
-git clone <repo-url>
-cd wechat-claude-bridge
+git clone https://github.com/LuYuxiaoPKU/Wechat-ClaudeCode-bridge.git
+cd Wechat-ClaudeCode-bridge
 pip install -r requirements.txt
 ```
 
