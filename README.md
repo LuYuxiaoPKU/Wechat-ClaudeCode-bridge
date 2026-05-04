@@ -17,19 +17,19 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
                          /push               v               v               v
                                         ThreadPool        Web :9876      Watchdog
                                           (x5)        /health /stats    Remind
-                                           |           /push
-                                           v
-                                    +-----------------+
-                                    |   Data & State  |
-                                    |   token.json     |
-                                    |   sessions.json  |
-                                    |   user_config    |
-                                    |   watchdog.json  |
-                                    |   reminders.json |
-                                    |   bridge.log     |
-                                    |   history/*.md   |
-                                    |   media/         |
-                                    +-----------------+
+                                             |         /push
+                                             v
+                                   +------------------+
+                                   |   Data & State   |
+                                   |   token.json     |
+                                   |   sessions.json  |
+                                   |   user_config    |
+                                   |   watchdog.json  |
+                                   |   reminders.json |
+                                   |   bridge.log     |
+                                   |   history/*.md   |
+                                   |   media/         |
+                                   +------------------+
                                   ~/.wechat-claude-bridge/
 ```
 
