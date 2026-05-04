@@ -601,6 +601,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "/mode <auto|ask>        — 切换权限模式\n"
             "/exec <shell命令>        — 在工作目录执行命令\n"
             "/remind <时间> <消息>    — 设置提醒\n"
+            "/cleanup <target>       — 清理缓存\n"
         )
 
     # ---- /cwd /dir /pwd ----
@@ -718,6 +719,47 @@ def handle_command(stripped, from_user, user_config, sessions,
             except Exception as e:
                 return True, f"[ERR] 命令执行失败: {e}"
         return True, "[USAGE] /exec <shell命令>"
+
+    # ---- /cleanup ----
+    if stripped.startswith("/cleanup"):
+        parts = stripped.split(maxsplit=1)
+        target = parts[1].strip().lower() if len(parts) == 2 else ""
+        if target in ("", "help"):
+            return True, (
+                "[USAGE] /cleanup <target>\n"
+                "  media   — 删除所有下载的图片/文件\n"
+                "  history — 删除你的消息历史记录\n"
+                "  all     — 删除 media + history"
+            )
+
+        results = []
+        if target in ("media", "all"):
+            media_dir = DATA_DIR / "media"
+            n = 0
+            if media_dir.is_dir():
+                for f in media_dir.iterdir():
+                    try:
+                        f.unlink()
+                        n += 1
+                    except Exception:
+                        pass
+            results.append(f"media: 已删除 {n} 个文件")
+
+        if target in ("history", "all"):
+            history_dir = DATA_DIR / "history"
+            user_file = history_dir / f"{from_user}.md"
+            n = 0
+            if user_file.exists():
+                try:
+                    user_file.unlink()
+                    n = 1
+                except Exception:
+                    pass
+            results.append(f"history: 已删除 {n} 个文件")
+
+        if not results:
+            return True, f"[USAGE] 未知 target: {target}，可选: media / history / all"
+        return True, "[CLEANUP]\n" + "\n".join(results)
 
     return False, ""
 
