@@ -305,7 +305,7 @@ def login(on_qr=None, on_status=None):
                 "baseUrl": status.get("baseurl", DEFAULT_BASE_URL),
                 "accountId": status["ilink_bot_id"],
                 "userId": status["ilink_user_id"],
-                "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+                "savedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             }
             save_session(session)
             logger(f"Bot ID: {session['accountId']}")
@@ -1000,28 +1000,51 @@ def handle_command(stripped, from_user, user_config, sessions,
         target_path = Path(target)
         if not target_path.is_absolute():
             target_path = Path(exec_cwd) / target
+        target_path = target_path.resolve()
+        if not target_path.is_dir():
+            return True, f"[ERR] 目录不存在: {target_path}"
         try:
-            if sys.platform == "win32":
-                cmd = f"dir \"{target_path}\""
-                shell = "cmd"
-            else:
-                cmd = f"ls -lah \"{target_path}\""
-                shell = "/bin/sh"
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True,
-                encoding="utf-8", timeout=15, executable=shell,
-                env={"PATH": os.environ.get("PATH", os.defpath)},
-            )
-            out = result.stdout.strip() or "(空目录)"
-            if result.returncode != 0:
-                err = result.stderr.strip()
-                return True, f"[ERR] {err}" if err else f"[ERR] 目录不存在: {target_path}"
-            label = str(target_path.resolve())
-            return True, f"{label}\n```\n{out[:2000]}\n```"
-        except subprocess.TimeoutExpired:
-            return True, "[ERR] 命令超时"
+            entries = sorted(target_path.iterdir(),
+                             key=lambda e: (not e.is_dir(), e.name.lower()))
+        except PermissionError:
+            return True, f"[ERR] 无权限访问: {target_path}"
         except Exception as e:
             return True, f"[ERR] {e}"
+
+        def _fmt_size(size):
+            if size < 1024:
+                return f"{size}B"
+            elif size < 1024**2:
+                return f"{size/1024:.1f}K"
+            elif size < 1024**3:
+                return f"{size/1024**2:.1f}M"
+            return f"{size/1024**3:.1f}G"
+
+        dirs, files = [], []
+        for entry in entries:
+            try:
+                st = entry.stat()
+                mtime = time.strftime("%m-%d %H:%M", time.localtime(st.st_mtime))
+                size = _fmt_size(st.st_size)
+                if entry.is_dir():
+                    dirs.append((entry.name, mtime))
+                else:
+                    files.append((entry.name, size, mtime))
+            except OSError:
+                if entry.is_dir():
+                    dirs.append((entry.name, "?"))
+                else:
+                    files.append((entry.name, "?", "?"))
+
+        lines = [f"```", f"  {target_path}"]
+        for name, mtime in dirs:
+            lines.append(f"  [{name}/]")
+        for name, size, mtime in files:
+            lines.append(f"  {name:<30} {size:>6}  {mtime}")
+        lines.append(f"```")
+        lines.append(f"{len(dirs)} dirs, {len(files)} files"
+                      + (f" (显示前 {len(entries)} 项)" if len(entries) >= 200 else ""))
+        return True, "\n".join(lines)
 
     # ---- /exec ----
     if stripped.startswith("/exec "):
@@ -1662,7 +1685,7 @@ def main_loop(session, sessions, user_config):
                                         "baseUrl": status_resp.get("baseurl", DEFAULT_BASE_URL),
                                         "accountId": status_resp["ilink_bot_id"],
                                         "userId": status_resp["ilink_user_id"],
-                                        "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S",
+                                        "savedAt": time.strftime("%Y-%m-%d %H:%M:%S",
                                                                  time.localtime()),
                                     }
                                     save_session(new_session)
@@ -1941,7 +1964,7 @@ def check_terms():
         sys.exit(1)
 
     if user_input == "I_ACCEPT_GPLV3_AND_COMPLIANCE_TERMS":
-        TERMS_FILE.write_text(time.strftime("%Y-%m-%dT%H:%M:%S"))
+        TERMS_FILE.write_text(time.strftime("%Y-%m-%d %H:%M:%S"))
         TERMS_FILE.chmod(0o600) if hasattr(TERMS_FILE, "chmod") else None
         print("\n[OK] 条款已接受。正在启动 bridge...\n")
         return True
