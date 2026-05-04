@@ -207,7 +207,8 @@ def load_session():
 def save_session(data):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     TOKEN_FILE.write_text(json.dumps(data, indent=2))
-    TOKEN_FILE.chmod(0o600)
+    if hasattr(TOKEN_FILE, "chmod"):
+        TOKEN_FILE.chmod(0o600)
 
 
 def clear_session():
@@ -414,8 +415,21 @@ def download_file(url, save_path):
 # ==========================================================================
 
 
+# 跨平台系统监控：优先使用 psutil，回退到原生接口
+try:
+    import psutil
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
+
+
 def _read_meminfo():
-    """读取 /proc/meminfo，返回 (total_kb, available_kb)"""
+    """跨平台读取内存信息，返回 (total_kb, available_kb)"""
+    if _HAS_PSUTIL:
+        mem = psutil.virtual_memory()
+        return mem.total // 1024, mem.available // 1024
+
+    # Linux fallback
     total = available = 0
     try:
         with open("/proc/meminfo") as f:
@@ -428,54 +442,130 @@ def _read_meminfo():
                     break
     except Exception:
         pass
+
+    # macOS fallback via sysctl
+    if total == 0 and sys.platform == "darwin":
+        try:
+            r = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                               capture_output=True, text=True, timeout=5)
+            total = int(r.stdout.strip()) // 1024
+            # 粗略估算可用内存 (不精确, 但可用)
+            import re
+            r2 = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+            pages = {}
+            for line in r2.stdout.splitlines():
+                m = re.match(r'(.+):\s+(\d+)\.?', line.strip().replace('"', ''))
+                if m:
+                    pages[m.group(1).strip()] = int(m.group(2))
+            page_size = 16384  # ARM Mac default
+            free_pages = pages.get("Pages free", 0) + pages.get("Pages inactive", 0)
+            available = free_pages * page_size // 1024
+        except Exception:
+            pass
+
     return total, available
 
 
 def _detect_disks():
-    """从 /proc/mounts 自动检测真实磁盘挂载点，排除伪文件系统"""
-    pseudo_fs = {
-        "proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup",
-        "cgroup2", "pstore", "bpf", "fusectl", "securityfs", "debugfs",
-        "tracefs", "configfs", "hugetlbfs", "mqueue", "ramfs", "overlay",
-    }
-    skip_prefixes = ("/sys/", "/proc/", "/dev/", "/run/", "/snap/")
-    disks = []
-    try:
-        with open("/proc/mounts") as f:
-            for line in f:
+    """跨平台自动检测真实磁盘挂载点"""
+    if _HAS_PSUTIL:
+        pseudo_fs = {"proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup",
+                      "cgroup2", "pstore", "bpf", "fusectl", "securityfs",
+                      "debugfs", "tracefs", "configfs", "hugetlbfs", "mqueue",
+                      "ramfs", "overlay", "squashfs", "autofs", "binfmt_misc"}
+        skip_prefixes = ("/sys/", "/proc/", "/dev/", "/run/", "/snap/", "/var/lib/")
+        disks = []
+        for part in psutil.disk_partitions():
+            if part.fstype and part.fstype.lower() in pseudo_fs:
+                continue
+            if any(part.mountpoint.startswith(p) for p in skip_prefixes):
+                continue
+            if part.device and part.mountpoint:
+                disks.append(part.mountpoint)
+        return sorted(set(disks)) if disks else ["/"]
+
+    # Linux fallback: /proc/mounts
+    if sys.platform == "linux":
+        pseudo_fs = {
+            "proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup",
+            "cgroup2", "pstore", "bpf", "fusectl", "securityfs", "debugfs",
+            "tracefs", "configfs", "hugetlbfs", "mqueue", "ramfs", "overlay",
+        }
+        skip_prefixes = ("/sys/", "/proc/", "/dev/", "/run/", "/snap/")
+        disks = []
+        try:
+            with open("/proc/mounts") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    dev, mp, fs_type = parts[0], parts[1], parts[2]
+                    if fs_type in pseudo_fs:
+                        continue
+                    if any(mp.startswith(p) for p in skip_prefixes):
+                        continue
+                    if dev.startswith("/dev/"):
+                        disks.append(mp)
+        except Exception:
+            pass
+        return sorted(set(disks)) if disks else ["/"]
+
+    # macOS fallback: parse mount output
+    if sys.platform == "darwin":
+        disks = []
+        try:
+            r = subprocess.run(["mount", "-t", "apfs,hfs,exfat,msdos"],
+                               capture_output=True, text=True, timeout=5)
+            for line in r.stdout.splitlines():
                 parts = line.split()
-                if len(parts) < 3:
-                    continue
-                dev, mp, fs_type = parts[0], parts[1], parts[2]
-                if fs_type in pseudo_fs:
-                    continue
-                if any(mp.startswith(p) for p in skip_prefixes):
-                    continue
-                # 设备路径以 /dev/ 开头
-                if dev.startswith("/dev/"):
-                    disks.append(mp)
-    except Exception:
-        pass
-    return sorted(set(disks)) if disks else ["/"]
+                if len(parts) >= 3 and parts[2].startswith("/"):
+                    disks.append(parts[2])
+        except Exception:
+            pass
+        return sorted(set(disks)) if disks else ["/"]
+
+    # Windows fallback: enumerate drive letters
+    if sys.platform == "win32":
+        import string
+        disks = []
+        for letter in string.ascii_uppercase:
+            p = f"{letter}:\\"
+            if os.path.exists(p):
+                try:
+                    shutil.disk_usage(p)
+                    disks.append(p)
+                except Exception:
+                    pass
+        return disks if disks else ["C:\\"]
+
+    return ["/"]
 
 
 def collect_metrics(disk_paths=None):
-    """采集系统指标，返回 dict"""
+    """跨平台采集系统指标，返回 dict"""
     if disk_paths is None:
         disk_paths = _detect_disks()
     metrics = {"timestamp": time.time(), "alerts": []}
 
-    # CPU
-    try:
-        load = os.getloadavg()[0]
-        cpu_count = os.cpu_count() or 1
-        metrics["cpu_load"] = round(load, 2)
-        metrics["cpu_percent"] = round((load / cpu_count) * 100, 1)
-    except Exception:
-        metrics["cpu_load"] = -1
-        metrics["cpu_percent"] = -1
+    # ---- CPU ----
+    cpu_pct = -1.0
+    cpu_load = -1
+    if _HAS_PSUTIL:
+        cpu_pct = psutil.cpu_percent(interval=0.5)
+        cpu_load = cpu_pct  # psutil 直接给百分比, 保持兼容
+    else:
+        try:
+            load = os.getloadavg()[0]
+            cpu_count = os.cpu_count() or 1
+            cpu_load = round(load, 2)
+            cpu_pct = round((load / cpu_count) * 100, 1)
+        except Exception:
+            cpu_load = -1
+            cpu_pct = -1
+    metrics["cpu_load"] = cpu_load
+    metrics["cpu_percent"] = cpu_pct
 
-    # 内存
+    # ---- 内存 ----
     total_kb, avail_kb = _read_meminfo()
     if total_kb > 0:
         metrics["memory_total_gb"] = round(total_kb / 1024 / 1024, 1)
@@ -484,7 +574,7 @@ def collect_metrics(disk_paths=None):
     else:
         metrics["memory_percent"] = -1
 
-    # 磁盘
+    # ---- 磁盘 ----
     metrics["disks"] = {}
     for p in disk_paths:
         try:
@@ -895,8 +985,8 @@ def handle_command(stripped, from_user, user_config, sessions,
                     shell_cmd, shell=True, capture_output=True,
                     encoding="utf-8", timeout=30, cwd=exec_cwd,
                     env={"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8",
-                         "PATH": os.environ.get("PATH", "/usr/bin"),
-                         "HOME": os.environ.get("HOME", "/root")},
+                         "PATH": os.environ.get("PATH", os.defpath),
+                         "HOME": os.environ.get("HOME", os.path.expanduser("~"))},
                 )
                 out = result.stdout.strip() or "(无输出)"
                 if result.returncode != 0:
