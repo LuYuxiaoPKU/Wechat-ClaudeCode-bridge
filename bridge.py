@@ -42,6 +42,7 @@ TOKEN_FILE = DATA_DIR / "token.json"
 SESSIONS_FILE = DATA_DIR / "sessions.json"
 USER_CONFIG_FILE = DATA_DIR / "user_config.json"
 REMINDERS_FILE = DATA_DIR / "reminders.json"
+WATCHDOG_FILE = DATA_DIR / "watchdog.json"
 LOG_FILE = DATA_DIR / "bridge.log"
 POLL_TIMEOUT_S = 38
 RATE_LIMIT_S = 5
@@ -409,6 +410,157 @@ def download_file(url, save_path):
 
 
 # ==========================================================================
+#  系统监控 (watchdog)
+# ==========================================================================
+
+
+def _read_meminfo():
+    """读取 /proc/meminfo，返回 (total_kb, available_kb)"""
+    total = available = 0
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    available = int(line.split()[1])
+                if total and available:
+                    break
+    except Exception:
+        pass
+    return total, available
+
+
+def collect_metrics(disk_paths=None):
+    """采集系统指标，返回 dict"""
+    if disk_paths is None:
+        disk_paths = ["/"]
+    metrics = {"timestamp": time.time(), "alerts": []}
+
+    # CPU
+    try:
+        load = os.getloadavg()[0]
+        cpu_count = os.cpu_count() or 1
+        metrics["cpu_load"] = round(load, 2)
+        metrics["cpu_percent"] = round((load / cpu_count) * 100, 1)
+    except Exception:
+        metrics["cpu_load"] = -1
+        metrics["cpu_percent"] = -1
+
+    # 内存
+    total_kb, avail_kb = _read_meminfo()
+    if total_kb > 0:
+        metrics["memory_total_gb"] = round(total_kb / 1024 / 1024, 1)
+        metrics["memory_used_gb"] = round((total_kb - avail_kb) / 1024 / 1024, 1)
+        metrics["memory_percent"] = round(((total_kb - avail_kb) / total_kb) * 100, 1)
+    else:
+        metrics["memory_percent"] = -1
+
+    # 磁盘
+    metrics["disks"] = {}
+    for p in disk_paths:
+        try:
+            usage = shutil.disk_usage(p)
+            pct = round((usage.used / usage.total) * 100, 1)
+            metrics["disks"][p] = {
+                "total_gb": round(usage.total / 1024**3, 1),
+                "used_gb": round(usage.used / 1024**3, 1),
+                "percent": pct,
+            }
+        except Exception:
+            metrics["disks"][p] = {"error": "unable to read"}
+
+    return metrics
+
+
+def check_watchdog(user_id=None):
+    """检查看门狗阈值，返回警报文本列表"""
+    config = load_watchdog_config()
+    if not config.get("enabled"):
+        return None, []
+
+    thresholds = config.get("thresholds", {})
+    disk_paths = config.get("disk_paths", ["/"])
+    metrics = collect_metrics(disk_paths)
+    alerts = []
+
+    cpu_thresh = thresholds.get("cpu_percent", 80)
+    if metrics["cpu_percent"] > cpu_thresh:
+        load_str = f"{metrics['cpu_load']} ({metrics['cpu_percent']}%)"
+        alerts.append(f"[CPU] {load_str} > 阈值 {cpu_thresh}%")
+
+    mem_thresh = thresholds.get("memory_percent", 90)
+    if metrics["memory_percent"] > mem_thresh:
+        alerts.append(
+            f"[MEM] {metrics.get('memory_used_gb','?')}G/"
+            f"{metrics.get('memory_total_gb','?')}G ({metrics['memory_percent']}%)"
+            f" > 阈值 {mem_thresh}%"
+        )
+
+    disk_thresh = thresholds.get("disk_percent", 90)
+    for path, info in metrics.get("disks", {}).items():
+        if "percent" in info and info["percent"] > disk_thresh:
+            alerts.append(
+                f"[DISK] {path} {info['used_gb']}G/"
+                f"{info['total_gb']}G ({info['percent']}%)"
+                f" > 阈值 {disk_thresh}%"
+            )
+
+    # 更新最后检查时间
+    config["last_check"] = time.time()
+    config["last_metrics"] = metrics
+    save_watchdog_config(config)
+
+    return config, alerts
+
+
+def load_watchdog_config():
+    if WATCHDOG_FILE.exists():
+        return json.loads(WATCHDOG_FILE.read_text())
+    return {
+        "enabled": False,
+        "interval_minutes": 5,
+        "disk_paths": ["/"],
+        "alert_cooldown_minutes": 30,
+        "thresholds": {"cpu_percent": 80, "memory_percent": 90, "disk_percent": 90},
+        "alert_user_id": None,
+        "last_check": None,
+        "last_alert": None,
+        "last_metrics": None,
+    }
+
+
+def save_watchdog_config(data):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    WATCHDOG_FILE.write_text(json.dumps(data, indent=2))
+
+
+def watchdog_thread_fn(base_url, token):
+    """后台线程：按间隔执行系统监控"""
+    while True:
+        try:
+            cfg = load_watchdog_config()
+            if cfg.get("enabled") and cfg.get("alert_user_id"):
+                interval = cfg.get("interval_minutes", 5) * 60
+                now = time.time()
+                last_check = cfg.get("last_check", 0)
+                if now - last_check >= interval:
+                    _, alerts = check_watchdog()
+                    if alerts:
+                        last_alert = cfg.get("last_alert", 0)
+                        cooldown = cfg.get("alert_cooldown_minutes", 30) * 60
+                        if now - last_alert >= cooldown:
+                            msg = "[WATCHDOG ALERT]\n" + "\n".join(alerts)
+                            send_message(base_url, token, cfg["alert_user_id"], msg)
+                            cfg["last_alert"] = now
+                            save_watchdog_config(cfg)
+                            log.warning(f"Watchdog 警报: {alerts}")
+        except Exception as e:
+            log.warning(f"Watchdog 出错: {e}")
+        time.sleep(30)
+
+
+# ==========================================================================
 #  Claude Code CLI 集成
 # ==========================================================================
 
@@ -602,6 +754,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "/exec <shell命令>        — 在工作目录执行命令\n"
             "/remind <时间> <消息>    — 设置提醒\n"
             "/cleanup <target>       — 清理缓存\n"
+            "/watchdog <cmd>         — 系统监控（CPU/内存/磁盘）\n"
         )
 
     # ---- /cwd /dir /pwd ----
@@ -760,6 +913,115 @@ def handle_command(stripped, from_user, user_config, sessions,
         if not results:
             return True, f"[USAGE] 未知 target: {target}，可选: media / history / all"
         return True, "[CLEANUP]\n" + "\n".join(results)
+
+    # ---- /watchdog ----
+    if stripped.startswith("/watchdog"):
+        parts = stripped.split(maxsplit=1)
+        sub = parts[1].strip().lower() if len(parts) == 2 else ""
+        wc = load_watchdog_config()
+
+        if sub in ("", "help"):
+            return True, (
+                "[USAGE] /watchdog <command>\n"
+                "  start [分钟]       — 开始监控（默认 5 分钟间隔）\n"
+                "  stop              — 停止监控\n"
+                "  status            — 查看状态和最近指标\n"
+                "  config <key> <val> — 设置阈值\n"
+                "  paths <p1,p2,...> — 设置监控的磁盘路径\n"
+                "  now               — 立即检查一次"
+            )
+
+        if sub == "start" or sub.startswith("start "):
+            interval = 5
+            if sub.startswith("start "):
+                try:
+                    interval = int(sub.split()[1])
+                except ValueError:
+                    pass
+            wc["enabled"] = True
+            wc["interval_minutes"] = interval
+            wc["alert_user_id"] = from_user
+            wc["last_check"] = 0
+            wc["last_alert"] = 0
+            save_watchdog_config(wc)
+            return True, (
+                f"[OK] Watchdog 已启动\n"
+                f"间隔: {interval} 分钟\n"
+                f"CPU 阈值: {wc['thresholds']['cpu_percent']}%\n"
+                f"内存阈值: {wc['thresholds']['memory_percent']}%\n"
+                f"磁盘阈值: {wc['thresholds']['disk_percent']}%\n"
+                f"磁盘路径: {', '.join(wc.get('disk_paths', ['/']))}\n"
+                f"告警冷却: {wc.get('alert_cooldown_minutes', 30)} 分钟"
+            )
+
+        if sub == "stop":
+            wc["enabled"] = False
+            save_watchdog_config(wc)
+            return True, "[OK] Watchdog 已停止"
+
+        if sub == "now":
+            _, alerts = check_watchdog()
+            if alerts:
+                return True, "[WATCHDOG]\n" + "\n".join(alerts)
+            m = wc.get("last_metrics", {})
+            if m:
+                lines = [
+                    f"CPU:  {m.get('cpu_load','?')} load / {m.get('cpu_percent','?')}%",
+                    f"MEM:  {m.get('memory_percent','?')}%",
+                ]
+                for p, i in m.get("disks", {}).items():
+                    lines.append(f"DISK: {p} {i.get('percent','?')}%")
+                lines.append("[OK] 所有指标正常")
+                return True, "[WATCHDOG OK]\n" + "\n".join(lines)
+            return True, "[WATCHDOG] 暂无数据，等待首次检查"
+
+        if sub == "status":
+            if not wc.get("enabled"):
+                return True, "[WATCHDOG] 未启动（/watchdog start）"
+            m = wc.get("last_metrics")
+            lines = [f"状态: 运行中 | 间隔: {wc.get('interval_minutes',5)}min"]
+            ts = wc.get("last_check")
+            if ts:
+                ago = int(time.time() - ts)
+                lines.append(f"上次检查: {ago}s 前")
+            if m:
+                lines.append(f"CPU:  load={m.get('cpu_load','?')} | {m.get('cpu_percent','?')}%")
+                lines.append(f"MEM:  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G = {m.get('memory_percent','?')}%")
+                for p, i in m.get("disks", {}).items():
+                    lines.append(f"DISK: {p} {i.get('used_gb','?')}/{i.get('total_gb','?')}G = {i.get('percent','?')}%")
+            return True, "[WATCHDOG]\n" + "\n".join(lines)
+
+        if sub.startswith("config "):
+            args = sub[len("config "):].strip().split()
+            if len(args) >= 2:
+                key = args[0]
+                try:
+                    val = float(args[1])
+                except ValueError:
+                    return True, f"[ERR] 值必须是数字: {args[1]}"
+                valid_keys = {"cpu_percent", "memory_percent", "disk_percent",
+                              "alert_cooldown_minutes", "interval_minutes"}
+                if key in valid_keys:
+                    if key in ("cpu_percent", "memory_percent", "disk_percent"):
+                        wc["thresholds"][key] = val
+                    elif key == "alert_cooldown_minutes":
+                        wc["alert_cooldown_minutes"] = val
+                    elif key == "interval_minutes":
+                        wc["interval_minutes"] = int(val)
+                    save_watchdog_config(wc)
+                    return True, f"[OK] {key} = {val}"
+                return True, f"[ERR] 未知配置项: {key}，可选: {', '.join(valid_keys)}"
+            return True, "[USAGE] /watchdog config cpu_percent 80"
+
+        if sub.startswith("paths "):
+            paths = [p.strip() for p in sub[len("paths "):].strip().split(",") if p.strip()]
+            if paths:
+                wc["disk_paths"] = paths
+                save_watchdog_config(wc)
+                return True, f"[OK] 磁盘监控路径: {', '.join(paths)}"
+            return True, "[USAGE] /watchdog paths /,/data,/home"
+
+        return True, "[USAGE] 未知子命令（/watchdog help 查看帮助）"
 
     return False, ""
 
@@ -958,6 +1220,14 @@ def main_loop(session, sessions, user_config):
         daemon=True,
     )
     remind_thread.start()
+
+    # Watchdog 后台线程
+    wd_thread = threading.Thread(
+        target=watchdog_thread_fn,
+        args=(base_url, token),
+        daemon=True,
+    )
+    wd_thread.start()
 
     running = True
 
