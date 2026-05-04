@@ -944,15 +944,32 @@ def handle_command(stripped, from_user, user_config, sessions,
             wc["last_check"] = 0
             wc["last_alert"] = 0
             save_watchdog_config(wc)
-            return True, (
-                f"[OK] Watchdog 已启动\n"
-                f"间隔: {interval} 分钟\n"
-                f"CPU 阈值: {wc['thresholds']['cpu_percent']}%\n"
-                f"内存阈值: {wc['thresholds']['memory_percent']}%\n"
-                f"磁盘阈值: {wc['thresholds']['disk_percent']}%\n"
-                f"磁盘路径: {', '.join(wc.get('disk_paths', ['/']))}\n"
-                f"告警冷却: {wc.get('alert_cooldown_minutes', 30)} 分钟"
-            )
+
+            # 立即执行首次检查
+            _, init_alerts = check_watchdog()
+            wc = load_watchdog_config()  # 重新读取（check_watchdog 已更新 last_check）
+
+            status_lines = [
+                f"[OK] Watchdog 已启动",
+                f"间隔: {interval} 分钟",
+                f"CPU 阈值: {wc['thresholds']['cpu_percent']}%",
+                f"内存阈值: {wc['thresholds']['memory_percent']}%",
+                f"磁盘阈值: {wc['thresholds']['disk_percent']}%",
+                f"磁盘路径: {', '.join(wc.get('disk_paths', ['/']))}",
+                f"告警冷却: {wc.get('alert_cooldown_minutes', 30)} 分钟",
+            ]
+            if init_alerts:
+                status_lines.append("\n[首次检查告警]\n" + "\n".join(init_alerts))
+            else:
+                m = wc.get("last_metrics", {})
+                if m:
+                    status_lines.append(
+                        f"\n[首次检查 OK] "
+                        f"CPU {m.get('cpu_percent','?')}% | "
+                        f"MEM {m.get('memory_percent','?')}% | "
+                        f"DISK {list(m.get('disks',{}).values())[0].get('percent','?') if m.get('disks') else '?'}%"
+                    )
+            return True, "\n".join(status_lines)
 
         if sub == "stop":
             wc["enabled"] = False
