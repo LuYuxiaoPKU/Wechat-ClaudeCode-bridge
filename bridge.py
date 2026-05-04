@@ -1825,14 +1825,21 @@ def main_loop(session, sessions, user_config):
                         "remind", "cleanup", "watchdog", "login", "ls", "top",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
+                    # 1. 前缀匹配（用户输入的前几个字符）
                     suggestions = []
                     for c in ALL_COMMANDS:
-                        if c.startswith(cmd_name[:2]) or cmd_name.startswith(c[:2]):
+                        if c.startswith(cmd_name[:3]) and len(cmd_name[:3]) >= 2:
                             suggestions.append("/" + c)
+                    # 2. 子串匹配
+                    if not suggestions:
+                        for c in ALL_COMMANDS:
+                            if cmd_name[:2] in c or c[:2] in cmd_name:
+                                suggestions.append("/" + c)
+                    # 3. 回退
                     if not suggestions:
                         suggestions = ["/help"]
                     send_message(base_url, token, from_user,
-                                 f"[?] 未知命令: {stripped}\n"
+                                 f"[?] {stripped} 不是有效命令\n"
                                  f"试试: {', '.join(suggestions[:5])}\n"
                                  f"输入 /help 查看全部", ctx)
                     continue
