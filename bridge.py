@@ -889,6 +889,9 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /pwd                     查看当前目录\n"
             "\n"
             "[ 系统 & 工具 ]\n"
+            "  /cpu                     查看 CPU 负载\n"
+            "  /mem                     查看内存使用\n"
+            "  /disk                    查看磁盘使用\n"
             "  /exec <shell cmd>        执行命令\n"
             "  /status                  运行状态\n"
             "  /watchdog <cmd>          系统监控\n"
@@ -1054,6 +1057,23 @@ def handle_command(stripped, from_user, user_config, sessions,
         if not results:
             return True, f"[USAGE] 未知 target: {target}，可选: media / history / all"
         return True, "[CLEANUP]\n" + "\n".join(results)
+
+    # ---- /cpu /mem /disk 快速查询 ----
+    if stripped in ("/cpu", "/mem", "/memory", "/disk", "/df"):
+        metrics = collect_metrics()
+        m = metrics
+        lines = ["```"]
+        if stripped in ("/cpu",):
+            lines.append(f"CPU  {_progress_bar(m['cpu_percent'])}  load {m.get('cpu_load','?')}")
+            lines.append(f"cores: {os.cpu_count() or '?'}")
+        elif stripped in ("/mem", "/memory"):
+            lines.append(f"MEM  {_progress_bar(m['memory_percent'])}")
+            lines.append(f"used: {m.get('memory_used_gb','?')}G / total: {m.get('memory_total_gb','?')}G")
+        elif stripped in ("/disk", "/df"):
+            for p, i in m.get("disks", {}).items():
+                lines.append(f"DISK {p:<8} {_progress_bar(i.get('percent',-1))}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+        lines.append("```")
+        return True, "\n".join(lines)
 
     # ---- /watchdog ----
     if stripped.startswith("/watchdog"):
