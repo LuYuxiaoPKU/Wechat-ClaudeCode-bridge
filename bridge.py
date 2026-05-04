@@ -893,6 +893,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /watchdog <cmd>          系统监控\n"
             "  /remind <时间> <消息>     定时提醒\n"
             "  /cleanup <target>        清理缓存\n"
+            "  /login                   重新扫码登录\n"
             "```\n"
             "//<cmd>  绕过桥接，直接发送给 Claude Code CLI"
         )
@@ -1573,6 +1574,80 @@ def main_loop(session, sessions, user_config):
                     print(f"   [CMD] {reply[:80]}")
                     continue
 
+                # ---- /login 重新登录 ----
+                if stripped == "/login":
+                    def _re_login():
+                        nonlocal token, base_url
+                        try:
+                            send_message(base_url, token, from_user,
+                                         "[LOGIN] 正在获取登录二维码...", ctx)
+                            qr_resp = api_get(base_url,
+                                              f"ilink/bot/get_bot_qrcode?bot_type={BOT_TYPE}")
+                            qr_url = qr_resp.get("qrcode_img_content", "")
+                            qr_id = qr_resp["qrcode"]
+                            send_message(base_url, token, from_user,
+                                         f"[QR] 请在浏览器中打开以下链接，"
+                                         f"用微信扫描二维码：\n{qr_url}", ctx)
+                            deadline = time.time() + 5 * 60
+                            refresh_count = 0
+                            while time.time() < deadline:
+                                status_resp = api_get(
+                                    base_url,
+                                    f"ilink/bot/get_qrcode_status?qrcode={qr_id}")
+                                s = status_resp["status"]
+                                if s == "wait":
+                                    time.sleep(2)
+                                elif s == "scaned":
+                                    send_message(base_url, token, from_user,
+                                                 "[SCAN] 已扫码，请在微信端确认...", ctx)
+                                    time.sleep(2)
+                                elif s == "expired":
+                                    refresh_count += 1
+                                    if refresh_count > 3:
+                                        send_message(base_url, token, from_user,
+                                                     "[ERR] 二维码多次过期，请重试 /login", ctx)
+                                        return
+                                    send_message(base_url, token, from_user,
+                                                 f"[WAIT] 二维码过期，刷新中 ({refresh_count}/3)...", ctx)
+                                    new_qr = api_get(
+                                        base_url,
+                                        f"ilink/bot/get_bot_qrcode?bot_type={BOT_TYPE}")
+                                    qr_id = new_qr["qrcode"]
+                                    qr_url = new_qr.get("qrcode_img_content", "")
+                                    send_message(base_url, token, from_user,
+                                                 f"[QR] 新二维码：\n{qr_url}", ctx)
+                                elif s == "confirmed":
+                                    new_session = {
+                                        "token": status_resp["bot_token"],
+                                        "baseUrl": status_resp.get("baseurl", DEFAULT_BASE_URL),
+                                        "accountId": status_resp["ilink_bot_id"],
+                                        "userId": status_resp["ilink_user_id"],
+                                        "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S",
+                                                                 time.localtime()),
+                                    }
+                                    save_session(new_session)
+                                    session["token"] = new_session["token"]
+                                    session["baseUrl"] = new_session["baseUrl"]
+                                    session["accountId"] = new_session["accountId"]
+                                    token = new_session["token"]
+                                    base_url = new_session["baseUrl"]
+                                    send_message(base_url, token, from_user,
+                                                 f"[OK] 重新登录成功！\n"
+                                                 f"Bot: {new_session['accountId']}", ctx)
+                                    log.info(f"re-login: {new_session['accountId']}")
+                                    return
+                            send_message(base_url, token, from_user,
+                                         "[ERR] 登录超时（5 分钟）", ctx)
+                        except Exception as e:
+                            send_message(base_url, token, from_user,
+                                         f"[ERR] 登录失败: {e}", ctx)
+                            log.error(f"re-login error: {e}")
+
+                    threading.Thread(target=_re_login, daemon=True).start()
+                    send_message(base_url, token, from_user,
+                                 "[LOGIN] 正在后台执行重新登录，请稍候...", ctx)
+                    continue
+
                 # ---- /status ----
                 if stripped == "/status":
                     uptime_s = time.time() - stats["start_time"]
@@ -1643,7 +1718,7 @@ def main_loop(session, sessions, user_config):
                         "new", "list", "switch", "clear",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog",
+                        "remind", "cleanup", "watchdog", "login",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
                     suggestions = []
