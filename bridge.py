@@ -592,17 +592,13 @@ def collect_metrics(disk_paths=None):
     return metrics
 
 
-def _progress_bar(pct, width=12):
-    """生成 ASCII 进度条: [====>       ] 80%"""
+def _progress_bar(pct, width=10):
+    """生成美观进度条: [████████  ] 80%"""
     if pct < 0:
         return f"[{'?' * width}] ???%"
     filled = min(int(pct / 100 * width), width)
-    if filled == width:
-        bar = "=" * width
-    elif filled == 0:
-        bar = " " * width
-    else:
-        bar = "=" * (filled - 1) + ">" + " " * (width - filled)
+    empty = width - filled
+    bar = "█" * filled + " " * empty
     return f"[{bar}] {pct:.0f}%"
 
 
@@ -915,7 +911,8 @@ def handle_command(stripped, from_user, user_config, sessions,
 
     if stripped in ("/cwd", "/dir", "/pwd"):
         cwd = cfg.get("cwd", "(未设置，使用 bridge 进程目录)")
-        return True, f"[CWD] {cwd}"
+        label = "PWD" if stripped == "/pwd" else "CWD"
+        return True, f"[{label}] {cwd}"
 
     # ---- /new ----
     if stripped.startswith("/new "):
@@ -1574,6 +1571,29 @@ def main_loop(session, sessions, user_config):
                 if handled:
                     send_message(base_url, token, from_user, reply, ctx)
                     print(f"   [CMD] {reply[:80]}")
+                    continue
+
+                # ---- 未知 / 命令 → 模糊匹配 ----
+                if stripped.startswith("/"):
+                    ALL_COMMANDS = [
+                        "help", "cwd", "pwd", "dir",
+                        "new", "list", "switch", "clear",
+                        "model", "mode", "exec", "status",
+                        "cpu", "mem", "memory", "disk", "df",
+                        "remind", "cleanup", "watchdog",
+                    ]
+                    cmd_name = stripped.split()[0].lstrip("/").lower()
+                    # 找相似命令（前缀匹配或编辑距离 ≤2）
+                    suggestions = []
+                    for c in ALL_COMMANDS:
+                        if c.startswith(cmd_name[:2]) or cmd_name.startswith(c[:2]):
+                            suggestions.append("/" + c)
+                    if not suggestions:
+                        suggestions = ["/help"]
+                    send_message(base_url, token, from_user,
+                                 f"[?] 未知命令: {stripped}\n"
+                                 f"试试: {', '.join(suggestions[:5])}\n"
+                                 f"输入 /help 查看全部", ctx)
                     continue
 
                 # ---- /status ----
