@@ -9,7 +9,7 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 ```
 +--------+     iLink API      +------------------+   ThreadPool  +-------------+
 |  WeChat | <===============> | wechat-claude-   | <===========> | Claude      |
-|  Client |    long polling   | bridge (Python)  |  subprocess   | Code CLI    |
+| (iOS)   |    long polling   | bridge (Python)  |  subprocess   | Code CLI    |
 +--------+                    +------------------+               +-------------+
                                       |  |
                                       |  | Web console (:9876)
@@ -19,44 +19,21 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
                                +-------------+  +-------------+
 ```
 
-## Features / 功能
+## Prerequisites / 前提
 
-- **微信 ↔ Claude Code 双向桥接** — 微信消息转发给 Claude Code，回复返回微信
-- **并发处理** — ThreadPoolExecutor，多个用户同时提问互不阻塞
-- **流式输出** — Claude 思考期间持续推送增量文本，不再长时间空白等待
-- **多轮对话** — 基于 `--resume`/`--session-id` 保持会话上下文
-- **独立工作目录** — 每个微信用户可指定不同项目目录（`/cwd` 命令）
-- **模型切换** — 微信内切换 `opus`/`sonnet`/`haiku`（`/model` 命令）
-- **命令执行** — `/exec` 在项目目录直接执行 shell 命令
-- **长消息拆分** — 超长回复自动按段落拆分为多条微信消息
-- **速率限制** — 防止刷屏，默认 5s 间隔
-- **用户白名单** — `WCB_ALLOWED_USERS` 环境变量控制访问权限
-- **优雅退出** — Ctrl+C 退出时自动通知所有用户
-- **Web 控制台** — `http://127.0.0.1:9876` 查看运行状态
-- **消息历史** — 自动记录到 `~/.wechat-claude-bridge/history/`
-- **文件日志** — 自动轮转日志 `~/.wechat-claude-bridge/bridge.log`
-- **纯 ASCII 输出** — 无 emoji，兼容 MobaXterm 等终端
+- **微信 ClawBot 插件**（iOS 微信 8.0.70+，需开通权限）
+- Python 3.9+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+- （可选）`psutil` 用于跨平台系统监控
 
 ## Quick Start / 快速开始
-
-### 前提
-
-- Python 3.9+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 已安装
-- 微信 iLink Bot
-
-### 安装
 
 ```bash
 git clone https://github.com/LuYuxiaoPKU/Wechat-ClaudeCode-bridge.git
 cd Wechat-ClaudeCode-bridge
 pip install -r requirements.txt
-```
 
-### 运行
-
-```bash
-# 首次运行 — 扫码登录
+# 首次运行 — 接受 GPLv3 条款 → 扫码登录
 python3 bridge.py --login
 
 # 后续运行 — 自动复用 token
@@ -66,27 +43,58 @@ python3 bridge.py
 ### Docker
 
 ```bash
-# 首次登录
-docker-compose run --rm bridge python3 bridge.py --login
-
-# 后台运行
 docker-compose up -d
 ```
 
+## Features / 功能
+
+- **微信 ↔ Claude Code 双向桥接** — 消息转发 + Claude 回复返回微信
+- **并发处理** — ThreadPoolExecutor，多用户同时提问互不阻塞
+- **流式输出** — Claude 思考期间持续推送增量文本
+- **多轮对话** — 基于 `--resume`/`--session-id` 的会话上下文保持
+- **多会话管理** — `/new` `/list` `/switch` 命名会话，不同项目独立上下文
+- **权限审批转发** — `/mode ask` 将 Claude 权限请求转发到微信确认
+- **独立工作目录** — 每个用户可指定不同项目目录（`/cwd`）
+- **模型切换** — 微信内切换 `opus`/`sonnet`/`haiku`（`/model`）
+- **命令逃逸** — `//cmd` 绕过桥接直接发送给 Claude Code CLI
+- **系统监控** — `/cpu` `/mem` `/disk` 快速查询 + `/watchdog` 定时告警
+- **定时提醒** — `/remind 30m` 或 `/remind 9:00` 自然语言定时
+- **HTTP Push** — `POST :9876/push` 外部系统推送消息到微信
+- **长消息拆分** — 超长回复按段落自动拆分
+- **速率限制** — 5s 间隔防刷屏
+- **用户白名单** — `WCB_ALLOWED_USERS` 环境变量
+- **上线/下线通知** — 启动通知历史用户，退出通知在线用户
+- **Web 控制台** — `http://127.0.0.1:9876` 查看状态
+- **消息历史** — `~/.wechat-claude-bridge/history/<uid>.md`
+- **日志轮转** — `~/.wechat-claude-bridge/bridge.log` (4MB ×3)
+
 ## Commands / 微信命令
 
-在微信中发送以下命令：
+```
+[ 会话 & 模型 ]
+  /new <name>              新建命名会话
+  /list                    列出所有会话
+  /switch <name>           切换活跃会话
+  /clear                   清除当前会话
+  /model <opus|sonnet|haiku> 切换模型
+  /mode <auto|ask>         权限模式
 
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助 |
-| `/cwd <path>` | 设置你的工作目录 |
-| `/pwd` | 查看当前工作目录 |
-| `/clear` | 清除当前会话（开始新对话） |
-| `/status` | 查看 bridge 运行状态 |
-| `/model <name>` | 切换模型（opus/sonnet/haiku） |
-| `/exec <cmd>` | 在工作目录执行 shell 命令 |
-| 其他消息 | 转发给 Claude Code 处理 |
+[ 工作目录 ]
+  /cwd <path>              设置工作目录
+  /pwd                     查看当前目录
+
+[ 系统 & 工具 ]
+  /cpu                     查看 CPU 负载
+  /mem                     查看内存使用
+  /disk                    查看磁盘使用
+  /exec <shell cmd>        执行命令
+  /status                  运行状态
+  /watchdog <cmd>          系统监控
+  /remind <时间> <消息>     定时提醒
+  /cleanup <target>        清理缓存
+
+//<cmd>  绕过桥接，直接发送给 Claude Code CLI
+```
 
 ## Configuration / 配置
 
@@ -96,18 +104,6 @@ docker-compose up -d
 |------|------|--------|
 | `WCB_ALLOWED_USERS` | 用户白名单（逗号分隔） | 空 = 允许所有 |
 
-### 数据文件
-
-所有数据存储在 `~/.wechat-claude-bridge/`：
-
-| 文件 | 内容 |
-|------|------|
-| `token.json` | iLink Bot 登录 token |
-| `sessions.json` | 用户 → Claude session_id 映射 |
-| `user_config.json` | 用户 → 工作目录、模型等配置 |
-| `bridge.log` | 运行日志（4MB 轮转，保留 3 个） |
-| `history/<user_id>.md` | 每个用户的消息历史 |
-
 ### 可调常量（bridge.py 顶部）
 
 ```python
@@ -116,49 +112,68 @@ MAX_MSG_LEN = 2000    # 微信单条消息最大字数
 POLL_TIMEOUT_S = 38   # 长轮询超时
 MAX_WORKERS = 5       # 并发 Claude 调用数
 WEB_PORT = 9876       # Web 控制台端口
-STREAM_INTERVAL = 3   # 流式输出推送间隔（秒）
 ```
+
+### 数据文件（~/.wechat-claude-bridge/）
+
+| 文件 | 内容 |
+|------|------|
+| `token.json` | iLink Bot 登录 token |
+| `terms_accepted` | GPLv3 条款接受记录 |
+| `sessions.json` | 用户多会话映射 |
+| `user_config.json` | 用户配置（cwd/model/mode） |
+| `watchdog.json` | 系统监控配置 |
+| `reminders.json` | 定时提醒列表 |
+| `bridge.log` | 运行日志（4MB 轮转） |
+| `history/<uid>.md` | 消息历史 |
+| `media/` | 下载的图片/文件 |
 
 ## Architecture / 架构
 
 ```
-bridge.py (~890 lines)
-├── setup_logging()       日志设置（文件轮转 + stderr）
-├── login()               iLink 扫码登录，获取 token
-├── get_updates()         长轮询获取微信消息
-├── extract_text()        从消息 item_list 提取文本
-├── extract_image_url()   提取图片下载链接
-├── handle_command()      内置命令分发（/help /cwd /clear 等）
+bridge.py (~1800 lines)
+├── check_terms()         GPLv3 条款确认
+├── login()               iLink 扫码登录
+├── get_updates()         长轮询收消息
+├── send_typing()         "正在输入"状态
+├── handle_command()      内置命令分发（16 个命令）
 ├── ask_claude()          Claude CLI 调用 + 会话管理
-│   └── run_claude_stream()  subprocess.Popen 流式读取
-├── send_message()        通过 iLink API 回复微信
-├── split_long_text()     长回复按段落拆分
-├── run_web()             HTTP 状态接口（:9876）
-└── main_loop()           主循环：收消息 → 线程池分发 → 回调发送
+│   └── run_claude_stream()  Popen 流式读取 + 权限检测
+├── collect_metrics()     跨平台系统指标采集（psutil + native）
+├── check_watchdog()      阈值检测 + 告警
+├── split_long_text()     长回复拆分
+├── WebHandler            HTTP API（/health /stats /push）
+└── main_loop()           主循环：轮询 → 分发 → 线程池 → 回调
+```
+
+## Web Console / Web API
+
+```bash
+# 健康检查
+curl http://127.0.0.1:9876/health
+
+# 运行统计
+curl http://127.0.0.1:9876/stats
+
+# 外部推送
+curl -X POST http://127.0.0.1:9876/push \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "xxx", "text": "部署完成"}'
 ```
 
 ## iLink Bot API
 
 基于腾讯微信 iLink Bot API (`ilinkai.weixin.qq.com`)：
 
-- `GET  /ilink/bot/get_bot_qrcode` — 获取登录二维码
-- `GET  /ilink/bot/get_qrcode_status` — 查询扫码状态
-- `POST /ilink/bot/getupdates` — 长轮询收消息
-- `POST /ilink/bot/sendmessage` — 发送消息
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `ilink/bot/get_bot_qrcode` | GET | 获取登录二维码 |
+| `ilink/bot/get_qrcode_status` | GET | 查询扫码状态 |
+| `ilink/bot/getupdates` | POST | 长轮询收消息 |
+| `ilink/bot/sendmessage` | POST | 发送消息 |
+| `ilink/bot/sendtyping` | POST | "正在输入"状态 |
 
-鉴权方式：`Authorization: Bearer <token>` + `AuthorizationType: ilink_bot_token`
-
-## Web Console / Web 控制台
-
-```bash
-# 健康检查
-curl http://127.0.0.1:9876/health
-
-# 完整状态
-curl http://127.0.0.1:9876/stats
-```
-
-返回 JSON：运行时间、总调用数、处理中请求数、活跃用户数、最近消息列表。
+鉴权：`Authorization: Bearer <token>` + `AuthorizationType: ilink_bot_token`
 
 ## License
 

@@ -616,13 +616,13 @@ def check_watchdog(user_id=None):
     cpu_thresh = thresholds.get("cpu_percent", 80)
     if metrics["cpu_percent"] > cpu_thresh:
         bar = _progress_bar(metrics["cpu_percent"])
-        alerts.append(f"CPU  {bar}  阈值 {cpu_thresh}%")
+        alerts.append(f"{'CPU':<5} {bar}  阈值 {cpu_thresh}%")
 
     mem_thresh = thresholds.get("memory_percent", 90)
     if metrics["memory_percent"] > mem_thresh:
         bar = _progress_bar(metrics["memory_percent"])
         alerts.append(
-            f"MEM  {bar}  "
+            f"{'MEM':<5} {bar}  "
             f"{metrics.get('memory_used_gb','?')}/{metrics.get('memory_total_gb','?')}G"
         )
 
@@ -631,7 +631,7 @@ def check_watchdog(user_id=None):
         if "percent" in info and info["percent"] > disk_thresh:
             bar = _progress_bar(info["percent"])
             alerts.append(
-                f"DISK {path}  {bar}  "
+                f"{'DISK':<5} {path:<10} {bar}  "
                 f"{info['used_gb']}/{info['total_gb']}G"
             )
 
@@ -1061,14 +1061,14 @@ def handle_command(stripped, from_user, user_config, sessions,
         m = metrics
         lines = ["```"]
         if stripped in ("/cpu",):
-            lines.append(f"CPU  {_progress_bar(m['cpu_percent'])}  load {m.get('cpu_load','?')}")
-            lines.append(f"cores: {os.cpu_count() or '?'}")
+            lines.append(f"{'CPU':<5} {_progress_bar(m['cpu_percent'])}  load {m.get('cpu_load','?')}")
+            lines.append(f"      cores: {os.cpu_count() or '?'}")
         elif stripped in ("/mem", "/memory"):
-            lines.append(f"MEM  {_progress_bar(m['memory_percent'])}")
-            lines.append(f"used: {m.get('memory_used_gb','?')}G / total: {m.get('memory_total_gb','?')}G")
+            lines.append(f"{'MEM':<5} {_progress_bar(m['memory_percent'])}")
+            lines.append(f"      {m.get('memory_used_gb','?')}G / {m.get('memory_total_gb','?')}G total")
         elif stripped in ("/disk", "/df"):
             for p, i in m.get("disks", {}).items():
-                lines.append(f"DISK {p:<8} {_progress_bar(i.get('percent',-1))}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                lines.append(f"{'DISK':<5} {p:<10} {_progress_bar(i.get('percent',-1))}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
         lines.append("```")
         return True, "\n".join(lines)
 
@@ -1124,12 +1124,12 @@ def handle_command(stripped, from_user, user_config, sessions,
                     status_lines.append("[首次检查 OK]")
                     status_lines.append("```")
                     cpu_pct = m.get('cpu_percent', -1)
-                    status_lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
+                    status_lines.append(f"{'CPU':<5} {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
                     mem_pct = m.get('memory_percent', -1)
-                    status_lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
+                    status_lines.append(f"{'MEM':<5} {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                     for p, i in m.get("disks", {}).items():
                         dp = i.get("percent", -1)
-                        status_lines.append(f"DISK {p:<8} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                        status_lines.append(f"{'DISK':<5} {p:<10} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
                     status_lines.append("```")
             return True, "\n".join(status_lines)
 
@@ -1146,12 +1146,12 @@ def handle_command(stripped, from_user, user_config, sessions,
             if m:
                 lines = ["[WATCHDOG OK]", "```"]
                 cpu_pct = m.get('cpu_percent', -1)
-                lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
+                lines.append(f"{'CPU':<5} {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
                 mem_pct = m.get('memory_percent', -1)
-                lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
+                lines.append(f"{'MEM':<5} {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                 for p, i in m.get("disks", {}).items():
                     dp = i.get("percent", -1)
-                    lines.append(f"DISK {p:<8} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                    lines.append(f"{'DISK':<5} {p:<10} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
                 lines.append("```")
                 return True, "\n".join(lines)
             return True, "[WATCHDOG] 暂无数据，等待首次检查"
@@ -1171,12 +1171,12 @@ def handle_command(stripped, from_user, user_config, sessions,
             if m:
                 lines.append("```")
                 cpu_pct = m.get('cpu_percent', -1)
-                lines.append(f"CPU  {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
+                lines.append(f"{'CPU':<5} {_progress_bar(cpu_pct)}  load {m.get('cpu_load','?')}")
                 mem_pct = m.get('memory_percent', -1)
-                lines.append(f"MEM  {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
+                lines.append(f"{'MEM':<5} {_progress_bar(mem_pct)}  {m.get('memory_used_gb','?')}/{m.get('memory_total_gb','?')}G")
                 for p, i in m.get("disks", {}).items():
                     dp = i.get("percent", -1)
-                    lines.append(f"DISK {p:<8} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
+                    lines.append(f"{'DISK':<5} {p:<10} {_progress_bar(dp)}  {i.get('used_gb','?')}/{i.get('total_gb','?')}G")
                 lines.append("```")
                 lines.append(f"阈值: CPU>{wc['thresholds']['cpu_percent']}% "
                              f"MEM>{wc['thresholds']['memory_percent']}% "
@@ -1573,29 +1573,6 @@ def main_loop(session, sessions, user_config):
                     print(f"   [CMD] {reply[:80]}")
                     continue
 
-                # ---- 未知 / 命令 → 模糊匹配 ----
-                if stripped.startswith("/"):
-                    ALL_COMMANDS = [
-                        "help", "cwd", "pwd", "dir",
-                        "new", "list", "switch", "clear",
-                        "model", "mode", "exec", "status",
-                        "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog",
-                    ]
-                    cmd_name = stripped.split()[0].lstrip("/").lower()
-                    # 找相似命令（前缀匹配或编辑距离 ≤2）
-                    suggestions = []
-                    for c in ALL_COMMANDS:
-                        if c.startswith(cmd_name[:2]) or cmd_name.startswith(c[:2]):
-                            suggestions.append("/" + c)
-                    if not suggestions:
-                        suggestions = ["/help"]
-                    send_message(base_url, token, from_user,
-                                 f"[?] 未知命令: {stripped}\n"
-                                 f"试试: {', '.join(suggestions[:5])}\n"
-                                 f"输入 /help 查看全部", ctx)
-                    continue
-
                 # ---- /status ----
                 if stripped == "/status":
                     uptime_s = time.time() - stats["start_time"]
@@ -1657,6 +1634,28 @@ def main_loop(session, sessions, user_config):
                         ts_fmt = time.strftime("%H:%M", time.localtime(at_time))
                         send_message(base_url, token, from_user,
                                      f"[OK] 提醒已设置: {ts_fmt} — {reminder_text}", ctx)
+                    continue
+
+                # ---- 未知 / 命令 → 模糊匹配 ----
+                if stripped.startswith("/"):
+                    ALL_COMMANDS = [
+                        "help", "cwd", "pwd", "dir",
+                        "new", "list", "switch", "clear",
+                        "model", "mode", "exec", "status",
+                        "cpu", "mem", "memory", "disk", "df",
+                        "remind", "cleanup", "watchdog",
+                    ]
+                    cmd_name = stripped.split()[0].lstrip("/").lower()
+                    suggestions = []
+                    for c in ALL_COMMANDS:
+                        if c.startswith(cmd_name[:2]) or cmd_name.startswith(c[:2]):
+                            suggestions.append("/" + c)
+                    if not suggestions:
+                        suggestions = ["/help"]
+                    send_message(base_url, token, from_user,
+                                 f"[?] 未知命令: {stripped}\n"
+                                 f"试试: {', '.join(suggestions[:5])}\n"
+                                 f"输入 /help 查看全部", ctx)
                     continue
 
                 # ---- 速率限制 ----
