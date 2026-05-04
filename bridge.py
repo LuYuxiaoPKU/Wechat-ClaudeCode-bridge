@@ -888,6 +888,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /cpu                     查看 CPU 负载\n"
             "  /mem                     查看内存使用\n"
             "  /disk                    查看磁盘使用\n"
+            "  /ls [path]               列出目录内容\n"
             "  /exec <shell cmd>        执行命令\n"
             "  /status                  运行状态\n"
             "  /watchdog <cmd>          系统监控\n"
@@ -933,8 +934,11 @@ def handle_command(stripped, from_user, user_config, sessions,
     if stripped == "/list":
         names = list_sessions(sessions, from_user)
         _, active_name = get_active_session_info(sessions, from_user)
-        lines = [f"* {n}" if n == active_name else f"  {n}" for n in names]
-        return True, "[SESSIONS]\n" + "\n".join(lines)
+        lines = [f"[SESSIONS] {len(names)} 个会话"]
+        for i, n in enumerate(names, 1):
+            marker = ">>" if n == active_name else "  "
+            lines.append(f" {marker} {i}. {n}")
+        return True, "\n".join(lines)
 
     # ---- /switch ----
     if stripped.startswith("/switch "):
@@ -989,17 +993,52 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, f"[MODE] 当前权限模式: {m}"
 
     # ---- /exec ----
+    # ---- /ls 目录列表 ----
+    if stripped == "/ls" or stripped.startswith("/ls "):
+        target = stripped[3:].strip() or "."
+        exec_cwd = cfg.get("cwd") or os.getcwd()
+        target_path = Path(target)
+        if not target_path.is_absolute():
+            target_path = Path(exec_cwd) / target
+        try:
+            if sys.platform == "win32":
+                cmd = f"dir \"{target_path}\""
+                shell = "cmd"
+            else:
+                cmd = f"ls -lah \"{target_path}\""
+                shell = "/bin/sh"
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True,
+                encoding="utf-8", timeout=15, executable=shell,
+                env={"PATH": os.environ.get("PATH", os.defpath)},
+            )
+            out = result.stdout.strip() or "(空目录)"
+            if result.returncode != 0:
+                err = result.stderr.strip()
+                return True, f"[ERR] {err}" if err else f"[ERR] 目录不存在: {target_path}"
+            label = str(target_path.resolve())
+            return True, f"{label}\n```\n{out[:2000]}\n```"
+        except subprocess.TimeoutExpired:
+            return True, "[ERR] 命令超时"
+        except Exception as e:
+            return True, f"[ERR] {e}"
+
+    # ---- /exec ----
     if stripped.startswith("/exec "):
         parts = stripped.split(maxsplit=1)
         if len(parts) == 2:
             shell_cmd = parts[1].strip()
             exec_cwd = cfg.get("cwd") or os.getcwd()
+            # 跨平台 shell
+            if sys.platform == "win32":
+                shell = "cmd"
+            else:
+                shell = os.environ.get("SHELL", "/bin/sh")
             try:
                 result = subprocess.run(
                     shell_cmd, shell=True, capture_output=True,
-                    encoding="utf-8", timeout=30, cwd=exec_cwd,
-                    env={"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8",
-                         "PATH": os.environ.get("PATH", os.defpath),
+                    encoding="utf-8", timeout=30, cwd=exec_cwd, executable=shell,
+                    env={"PATH": os.environ.get("PATH", os.defpath),
                          "HOME": os.environ.get("HOME", os.path.expanduser("~"))},
                 )
                 out = result.stdout.strip() or "(无输出)"
@@ -1007,8 +1046,9 @@ def handle_command(stripped, from_user, user_config, sessions,
                     err = result.stderr.strip()
                     if err:
                         out += f"\n[STDERR] {err}"
-                    return True, f"[EXIT {result.returncode}] {out[:1800]}"
-                return True, out[:2000]
+                    # 代码块包裹，保持换行可读
+                    return True, f"[EXIT {result.returncode}]\n```\n{out[:1800]}\n```"
+                return True, f"```\n{out[:2000]}\n```"
             except subprocess.TimeoutExpired:
                 return True, "[ERR] 命令执行超时（30s）"
             except Exception as e:
@@ -1718,7 +1758,7 @@ def main_loop(session, sessions, user_config):
                         "new", "list", "switch", "clear",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog", "login",
+                        "remind", "cleanup", "watchdog", "login", "ls",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
                     suggestions = []
