@@ -757,7 +757,7 @@ def watchdog_thread_fn(base_url, token):
 # ==========================================================================
 
 
-def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300,
+def run_claude_stream(text, cwd=None, extra_args=None, timeout_s=300,
                       cancel_event=None):
     """
     使用 subprocess.Popen 执行 claude CLI，流式返回增量文本。
@@ -770,8 +770,6 @@ def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300
     else:
         cmd.append("--permission-mode")
         cmd.append("auto")
-    if model:
-        cmd.extend(["--model", model])
 
     env = {**os.environ, "CLAUDE_CODE_SIMPLE": "1",
            "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
@@ -877,7 +875,7 @@ def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300
         yield (False, current.strip())
 
 
-def ask_claude(text, user_id, sessions, cwd=None, model=None,
+def ask_claude(text, user_id, sessions, cwd=None,
                permission_mode="auto", on_stream=None, cancel_event=None):
     """
     调用 claude CLI 处理消息。返回 (output, permission_pending, permission_text)。
@@ -899,7 +897,7 @@ def ask_claude(text, user_id, sessions, cwd=None, model=None,
         acc = ""
         perm_text = ""
         for is_partial, chunk in run_claude_stream(
-            text, cwd=cwd, model=model, extra_args=extra_args,
+            text, cwd=cwd, extra_args=extra_args,
             cancel_event=cancel_event,
         ):
             if is_partial:
@@ -964,7 +962,6 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /switch <name>           切换活跃会话\n"
             "  /attach <uuid> [name]   接入外部会话\n"
             "  /reset                   重置当前会话\n"
-            "  /model <opus|sonnet|haiku> 切换模型\n"
             "  /mode <auto|ask>         权限模式\n"
             "\n"
             "[ 工作目录 ]\n"
@@ -1142,22 +1139,6 @@ def handle_command(stripped, from_user, user_config, sessions,
             f"Claude 对话历史未删除，仍保留在磁盘上。\n"
             f"找回方式: /attach {deleted_uuid} {name}"
         )
-
-    # ---- /model ----
-    if stripped.startswith("/model "):
-        parts = stripped.split(maxsplit=1)
-        if len(parts) == 2:
-            m = parts[1].strip().lower()
-            if m in ("opus", "sonnet", "haiku"):
-                cfg["model"] = m
-                save_user_config(user_config)
-                pop_session(sessions, from_user)
-                return True, f"[OK] 模型已切换为 {m}，会话已重置"
-            return True, "[USAGE] /model <opus|sonnet|haiku>"
-
-    if stripped == "/model":
-        m = cfg.get("model", "默认")
-        return True, f"[MODEL] 当前模型: {m}"
 
     # ---- /mode ----
     if stripped.startswith("/mode "):
@@ -1765,7 +1746,6 @@ def check_reminders(reminders, base_url, token, executor, sessions, user_config)
                 output, _, _ = ask_claude(
                     text, uid, sessions,
                     cwd=user_config.get(uid, {}).get("cwd"),
-                    model=user_config.get(uid, {}).get("model"),
                     permission_mode=user_config.get(uid, {}).get("permission_mode", "auto"),
                 )
                 for chunk in split_long_text(output):
@@ -1824,7 +1804,6 @@ def main_loop(session, sessions, user_config):
         executor.submit(
             ask_claude, text, user_id, sessions,
             cwd=user_config.get(user_id, {}).get("cwd"),
-            model=user_config.get(user_id, {}).get("model"),
             permission_mode=user_config.get(user_id, {}).get("permission_mode", "auto"),
         )
 
@@ -2004,7 +1983,7 @@ def main_loop(session, sessions, user_config):
                         print(f"   [PERM] {from_user} → {answer}")
                         future = executor.submit(
                             ask_claude, permission_prompt, from_user, sessions,
-                            cwd=cfg.get("cwd"), model=cfg.get("model"),
+                            cwd=cfg.get("cwd"),
                             permission_mode="auto",
                         )
                         future.add_done_callback(
@@ -2219,7 +2198,7 @@ def main_loop(session, sessions, user_config):
                     ALL_COMMANDS = [
                         "help", "cwd", "pwd", "dir",
                         "new", "list", "switch", "attach", "reset",
-                        "model", "mode", "exec", "status",
+                        "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
                         "remind", "cleanup", "watchdog", "login", "ls", "top", "history", "stop", "send",
                     ]
@@ -2270,7 +2249,7 @@ def main_loop(session, sessions, user_config):
                 stats["in_flight"] = in_flight
                 perm_mode = cfg.get("permission_mode", "auto")
 
-                def _claude_task(uid, txt, cwd, mdl, p_mode, cancel_evt):
+                def _claude_task(uid, txt, cwd, p_mode, cancel_evt):
                     stream_buf = []
                     last_stream_send = [0]
 
@@ -2287,7 +2266,7 @@ def main_loop(session, sessions, user_config):
                             last_stream_send[0] = now
 
                     output, perm_pending, perm_text = ask_claude(
-                        txt, uid, sessions, cwd=cwd, model=mdl,
+                        txt, uid, sessions, cwd=cwd,
                         permission_mode=p_mode, cancel_event=cancel_evt,
                         on_stream=_on_stream,
                     )
@@ -2312,11 +2291,10 @@ def main_loop(session, sessions, user_config):
                     return output
 
                 cwd = cfg.get("cwd")
-                model = cfg.get("model")
                 cancel_evt = threading.Event()
                 cancel_events[from_user] = cancel_evt
                 future = executor.submit(
-                    _claude_task, from_user, text, cwd, model, perm_mode,
+                    _claude_task, from_user, text, cwd, perm_mode,
                     cancel_evt,
                 )
                 call_start = time.time()

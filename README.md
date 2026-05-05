@@ -6,7 +6,7 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 
 > Built with **Claude Code**, powered by **DeepSeek V4 Pro[1m]**
 >
-> 新手入门请阅读 **[TUTORIAL.md / 上手指南](./TUTORIAL.md)**（20 分钟完成部署）
+> 新手入门请阅读 **[TUTORIAL.md / 上手指南](./TUTORIAL.md)**（5 分钟完成部署）
 
 ```
                         iLink API (HTTPS long polling)
@@ -81,7 +81,6 @@ docker-compose up -d
 - **多会话管理** — `/new` `/list` `/switch` `/attach` `/reset` 命名会话，不同项目独立上下文
 - **权限审批转发** — `/mode ask` 将 Claude 权限请求转发到微信确认（6 小时超时）
 - **独立工作目录** — 每个用户可指定不同项目目录（`/cwd`）
-- **模型切换** — 微信内切换 `opus`/`sonnet`/`haiku`（`/model`）
 - **命令逃逸** — `//cmd` 绕过桥接直接发送给 Claude Code CLI
 - **系统监控** — `/cpu` `/mem` `/disk` `/top` 快速查询 + `/watchdog` 定时告警
 - **定时提醒** — `/remind 30m` 或 `/remind 9:00` 自然语言定时
@@ -105,7 +104,6 @@ docker-compose up -d
   /switch <name>           切换活跃会话
   /attach <uuid> [name]   接入外部会话 UUID
   /reset [name]            重置会话（切回 default，default 不可清除）
-  /model <opus|sonnet|haiku> 切换模型
   /mode <auto|ask>         权限模式
 
 [ 工作目录 ]
@@ -159,7 +157,7 @@ PERMISSION_TIMEOUT_S = 21600  # 权限请求超时（6 小时）
 | `token.json` | iLink Bot 登录 token |
 | `terms_accepted` | GPLv3 条款接受记录 |
 | `sessions.json` | 用户多会话映射 |
-| `user_config.json` | 用户配置（cwd/model/mode） |
+| `user_config.json` | 用户配置（cwd/mode） |
 | `watchdog.json` | 系统监控配置 |
 | `reminders.json` | 定时提醒列表 |
 | `bridge.log` | 运行日志（4MB 轮转） |
@@ -183,7 +181,7 @@ bridge.py (~2400 lines)
 │   └── send_typing()          "正在输入" 状态
 │
 ├── 命令分发
-│   ├── handle_command()       22 个内置命令
+│   ├── handle_command()       21 个内置命令
 │   ├── /status /remind        内联命令
 │   └── 模糊匹配               未知 /cmd 智能提示
 │

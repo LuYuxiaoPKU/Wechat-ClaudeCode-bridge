@@ -1,6 +1,6 @@
 # WeChat-Claude-Bridge 上手指南
 
-通过微信遥控 Claude Code 写代码、改文件、执行命令。本教程带你从零开始，20 分钟完成部署并发送第一条微信指令。
+通过微信遥控 Claude Code 写代码、改文件、执行命令。本教程带你从零开始，5 分钟完成部署并发送第一条微信指令。
 
 ---
 
@@ -113,18 +113,7 @@ Claude 默认在你的 bridge.py 启动目录下工作。你可以指定一个�
 
 > `/reset` 不会删除 Claude 的对话历史，可以随时用 `/attach <uuid>` 找回。
 
-### 6.3 模型切换
-
-```
-/model                  查看当前模型
-/model sonnet           切换到 Claude Sonnet
-/model opus             切换到 Claude Opus
-/model haiku            切换到 Claude Haiku
-```
-
-> 切换模型会自动重置当前会话。
-
-### 6.4 权限模式
+### 6.3 权限模式
 
 ```
 /mode                   查看当前模式
@@ -143,7 +132,7 @@ Do you want to proceed? (y/n)
 
 回复 `yes` 批准，`no` 拒绝。6 小时内未回复自动取消。
 
-### 6.5 系统监控
+### 6.4 系统监控
 
 ```
 /cpu                    CPU 负载
@@ -153,7 +142,7 @@ Do you want to proceed? (y/n)
 /top mem                进程内存 Top20
 ```
 
-### 6.6 执行命令
+### 6.5 执行命令
 
 ```
 /exec ls -la
@@ -163,7 +152,7 @@ Do you want to proceed? (y/n)
 
 > 命令执行超时 30 秒，输出限制 2000 字。
 
-### 6.7 文件操作
+### 6.6 文件操作
 
 ```
 /ls                    列出当前目录
@@ -172,7 +161,7 @@ Do you want to proceed? (y/n)
 /send ~/data/report.pdf         发送文件到微信
 ```
 
-### 6.8 定时提醒
+### 6.7 定时提醒
 
 ```
 /remind 30m 检查部署状态
@@ -182,7 +171,7 @@ Do you want to proceed? (y/n)
 
 > 提醒到达后会通过 Claude 处理，可以写自然语言让 Claude 执行具体任务。
 
-### 6.9 其他
+### 6.8 其他
 
 ```
 /status                 查看 bridge 运行状态
