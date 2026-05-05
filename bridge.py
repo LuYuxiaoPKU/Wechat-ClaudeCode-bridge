@@ -995,8 +995,25 @@ def handle_command(stripped, from_user, user_config, sessions,
 
     # ---- /clear ----
     if stripped == "/clear":
+        _, active_name = get_active_session_info(sessions, from_user)
         pop_session(sessions, from_user)
-        return True, "[OK] 当前会话已清除"
+        return True, f"[OK] 会话 '{active_name}' 已清除"
+
+    if stripped.startswith("/clear "):
+        name = stripped.split(maxsplit=1)[1].strip()
+        names = list_sessions(sessions, from_user)
+        if name not in names:
+            return True, f"[ERR] 会话不存在: {name}（/list 查看所有会话）"
+        _, active_name = get_active_session_info(sessions, from_user)
+        if name == active_name:
+            pop_session(sessions, from_user)
+        else:
+            entry = sessions.get(from_user)
+            if isinstance(entry, dict):
+                entry["names"].remove(name)
+                entry["_external"].pop(name, None) if "_external" in entry else None
+                save_user_sessions(sessions)
+        return True, f"[OK] 会话 '{name}' 已清除"
 
     # ---- /model ----
     if stripped.startswith("/model "):
