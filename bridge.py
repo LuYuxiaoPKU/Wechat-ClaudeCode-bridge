@@ -362,7 +362,7 @@ def send_message(base_url, token, to_user_id, text, context_token=""):
     )
     if resp is None:
         log.error(f"send_message 超时: {to_user_id} len={len(text)}")
-    elif resp.get("ret") != 0:
+    elif resp.get("ret") not in (0, None):
         log.error(f"send_message 失败: {to_user_id} ret={resp.get('ret')} "
                   f"resp={json.dumps(resp, ensure_ascii=False)[:300]}")
     return client_id
@@ -415,7 +415,7 @@ def send_media(base_url, token, to_user_id, file_path, media_type=None):
     if resp is None:
         log.error(f"send_media 超时: {to_user_id} {fname}")
         return False, "发送超时"
-    elif resp.get("ret") != 0:
+    elif resp.get("ret") not in (0, None):
         log.error(f"send_media 失败: {to_user_id} {fname} ret={resp.get('ret')}")
         return False, f"发送失败 ret={resp.get('ret')}"
     log.info(f"send_media 成功: {to_user_id} {fname} ({size}B)")
@@ -2246,11 +2246,11 @@ def main_loop(session, sessions, user_config):
 
                 # ---- 转发 Claude ----
                 send_message(base_url, token, from_user,
-                             "[THINK] Claude 正在思考...", ctx)
+                             "[THINK] 正在思考...", ctx)
 
                 _save_history(from_user, "User", text)
 
-                print("   [THINK] Claude 处理中...", end="", flush=True)
+                print("   [THINK] 处理中...", end="", flush=True)
                 last_request[from_user] = now_ts
                 in_flight.add(from_user)
                 stats["in_flight"] = in_flight
@@ -2277,13 +2277,6 @@ def main_loop(session, sessions, user_config):
                         permission_mode=p_mode, cancel_event=cancel_evt,
                         on_stream=_on_stream,
                     )
-
-                    # 发送剩余流式缓冲
-                    if stream_buf:
-                        remaining = markdown_to_wechat(''.join(stream_buf))
-                        if remaining.strip():
-                            send_message(base_url, token, uid,
-                                         f"[...]\n{remaining}", ctx)
 
                     if perm_pending:
                         send_message(base_url, token, uid,

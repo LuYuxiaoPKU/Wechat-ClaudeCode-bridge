@@ -79,7 +79,7 @@ hello，介绍一下你自己
 
 你会看到：
 
-1. `[THINK] Claude 正在思考...` — bridge 已收到消息
+1. `[THINK] 正在思考...` — bridge 已收到消息
 2. `[...]` — Claude 开始流式回复（增量推送）
 3. 最终回复 — 经过 Markdown 转换的完整回答
 
