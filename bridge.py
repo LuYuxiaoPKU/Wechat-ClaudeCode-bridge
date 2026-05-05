@@ -1015,9 +1015,14 @@ def handle_command(stripped, from_user, user_config, sessions,
 
     # ---- /clear ----
     if stripped == "/clear":
-        _, active_name = get_active_session_info(sessions, from_user)
+        active_name, session_id = get_active_session_info(sessions, from_user)
         pop_session(sessions, from_user)
-        return True, f"[OK] 会话 '{active_name}' 已清除"
+        return True, (
+            f"[OK] 会话 '{active_name}' 已清除\n"
+            f"\n"
+            f"Claude 对话历史未删除，仍保留在磁盘上。\n"
+            f"找回方式: /attach {session_id} {active_name}"
+        )
 
     if stripped.startswith("/clear "):
         name = stripped.split(maxsplit=1)[1].strip()
@@ -1025,15 +1030,26 @@ def handle_command(stripped, from_user, user_config, sessions,
         if name not in names:
             return True, f"[ERR] 会话不存在: {name}（/list 查看所有会话）"
         _, active_name = get_active_session_info(sessions, from_user)
+        # 获取要删除的会话 UUID（用于提示找回）
+        entry = sessions.get(from_user, {})
+        ext_map = entry.get("_external", {}) if isinstance(entry, dict) else {}
+        if name in ext_map:
+            deleted_uuid = ext_map[name]
+        else:
+            deleted_uuid = user_session_uuid(from_user, name)
         if name == active_name:
             pop_session(sessions, from_user)
         else:
-            entry = sessions.get(from_user)
             if isinstance(entry, dict):
                 entry["names"].remove(name)
                 entry["_external"].pop(name, None) if "_external" in entry else None
                 save_user_sessions(sessions)
-        return True, f"[OK] 会话 '{name}' 已清除"
+        return True, (
+            f"[OK] 会话 '{name}' 已清除\n"
+            f"\n"
+            f"Claude 对话历史未删除，仍保留在磁盘上。\n"
+            f"找回方式: /attach {deleted_uuid} {name}"
+        )
 
     # ---- /model ----
     if stripped.startswith("/model "):
