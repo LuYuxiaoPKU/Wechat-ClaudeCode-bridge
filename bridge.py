@@ -922,7 +922,7 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, "[USAGE] /cwd <path>"
 
     if stripped in ("/cwd", "/dir", "/pwd"):
-        cwd = cfg.get("cwd", "(未设置，使用 bridge 进程目录)")
+        cwd = cfg.get("cwd", f"(默认: {STARTUP_CWD})")
         label = "PWD" if stripped == "/pwd" else "CWD"
         return True, f"[{label}] {cwd}"
 
@@ -991,7 +991,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             ext_map = cfg_sess.setdefault("_external", {})
             ext_map[name] = ext_id
             save_user_sessions(sessions)
-            cwd = cfg.get("cwd", os.getcwd())
+            cwd = cfg.get("cwd") or STARTUP_CWD
             return True, (
                 f"[OK] 已接入外部会话: {name}\n"
                 f"UUID: {ext_id}\n"
@@ -1002,7 +1002,7 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, "[USAGE] /attach <session_uuid> [名称]"
 
     if stripped == "/attach":
-        cwd = cfg.get("cwd", os.getcwd())
+        cwd = cfg.get("cwd") or STARTUP_CWD
         return True, (
             f"[USAGE] /attach <session_uuid> [名称]\n"
             f"\n"
@@ -1104,7 +1104,7 @@ def handle_command(stripped, from_user, user_config, sessions,
     # ---- /ls 目录列表 ----
     if stripped == "/ls" or stripped.startswith("/ls "):
         target = stripped[3:].strip() or "."
-        exec_cwd = cfg.get("cwd") or os.getcwd()
+        exec_cwd = cfg.get("cwd") or STARTUP_CWD
         target_path = Path(target)
         if not target_path.is_absolute():
             target_path = Path(exec_cwd) / target
@@ -1159,7 +1159,7 @@ def handle_command(stripped, from_user, user_config, sessions,
         parts = stripped.split(maxsplit=1)
         if len(parts) == 2:
             shell_cmd = parts[1].strip()
-            exec_cwd = cfg.get("cwd") or os.getcwd()
+            exec_cwd = cfg.get("cwd") or STARTUP_CWD
             # 跨平台 shell
             if sys.platform == "win32":
                 shell = "cmd"
@@ -2147,10 +2147,12 @@ def check_terms():
 #  入口
 # ==========================================================================
 
+STARTUP_CWD = os.getcwd()
+
 if __name__ == "__main__":
     check_terms()
     setup_logging()
-    log.info("bridge 启动")
+    log.info(f"bridge 启动, 工作目录: {STARTUP_CWD}")
 
     force_login = "--login" in sys.argv
     session = None if force_login else load_session()
