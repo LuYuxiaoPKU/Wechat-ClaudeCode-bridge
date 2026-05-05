@@ -117,16 +117,19 @@ def user_session_uuid(user_id, session_name="default"):
 
 
 def get_active_session_info(sessions, user_id):
-    """返回 (session_name, session_uuid)，兼容旧格式"""
+    """返回 (session_name, session_uuid)，兼容旧格式。支持外部 UUID"""
     entry = sessions.get(user_id)
     if entry is None:
         return "default", user_session_uuid(user_id, "default")
     if isinstance(entry, str):
-        # 旧格式: user_id → uuid 字符串，迁移到新格式
         sessions[user_id] = {"active": "default", "names": ["default"]}
         save_user_sessions(sessions)
         return "default", entry
     name = entry.get("active", "default")
+    # 外部接入的 UUID（/attach 设置的）
+    ext_map = entry.get("_external", {})
+    if name in ext_map:
+        return name, ext_map[name]
     return name, user_session_uuid(user_id, name)
 
 
@@ -876,6 +879,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /new <name>              新建命名会话\n"
             "  /list                    列出所有会话\n"
             "  /switch <name>           切换活跃会话\n"
+            "  /attach <uuid> [name]   接入外部会话\n"
             "  /clear                   清除当前会话\n"
             "  /model <opus|sonnet|haiku> 切换模型\n"
             "  /mode <auto|ask>         权限模式\n"
@@ -955,6 +959,38 @@ def handle_command(stripped, from_user, user_config, sessions,
 
     if stripped == "/switch":
         return True, "[USAGE] /switch <名称>"
+
+    # ---- /attach <session_uuid> [name] ----
+    if stripped.startswith("/attach "):
+        parts = stripped.split()
+        if len(parts) >= 2:
+            ext_id = parts[1]
+            # 验证是否为合法 UUID 格式
+            try:
+                uuid.UUID(ext_id)
+            except ValueError:
+                return True, f"[ERR] 无效的 session UUID: {ext_id}"
+            name = parts[2] if len(parts) >= 3 else f"ext-{ext_id[:8]}"
+            # 直接将外部 UUID 作为会话名对应的 UUID 存入
+            entry = sessions.setdefault(from_user,
+                                        {"active": "default", "names": ["default"]})
+            if isinstance(entry, str):
+                entry = {"active": "default", "names": ["default"]}
+                sessions[from_user] = entry
+            entry["active"] = name
+            if name not in entry.setdefault("names", ["default"]):
+                entry["names"].append(name)
+            # 绕过 uuid5 生成，直接存储外部 UUID 到会话映射
+            cfg_sess = sessions[from_user]
+            # 用一个特殊字段存储外部 UUIDs
+            ext_map = cfg_sess.setdefault("_external", {})
+            ext_map[name] = ext_id
+            save_user_sessions(sessions)
+            return True, f"[OK] 已接入外部会话: {name}\nUUID: {ext_id}\n\n/cwd 到对应目录后可继续对话"
+        return True, "[USAGE] /attach <session_uuid> [名称]"
+
+    if stripped == "/attach":
+        return True, "[USAGE] /attach <session_uuid> [名称]\n\n在 Claude Code CLI 中用 /resume 查看 session UUID"
 
     # ---- /clear ----
     if stripped == "/clear":
@@ -1819,7 +1855,7 @@ def main_loop(session, sessions, user_config):
                 if stripped.startswith("/"):
                     ALL_COMMANDS = [
                         "help", "cwd", "pwd", "dir",
-                        "new", "list", "switch", "clear",
+                        "new", "list", "switch", "attach", "clear",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
                         "remind", "cleanup", "watchdog", "login", "ls", "top",
