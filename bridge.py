@@ -369,6 +369,60 @@ def send_message(base_url, token, to_user_id, text, context_token=""):
     return client_id
 
 
+def send_media(base_url, token, to_user_id, file_path, media_type=None):
+    """发送图片或文件到微信。media_type: 'image' 或 'file'，默认根据扩展名判断"""
+    path = Path(file_path).expanduser().resolve()
+    if not path.is_file():
+        return False, f"文件不存在: {path}"
+
+    size = path.stat().st_size
+    if size > 50 * 1024 * 1024:
+        return False, f"文件过大（{size / 1024 / 1024:.1f}MB > 50MB）"
+
+    ext = path.suffix.lower()
+    if media_type is None:
+        image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'}
+        media_type = 'image' if ext in image_exts else 'file'
+
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode()
+    except Exception as e:
+        return False, f"读取文件失败: {e}"
+
+    client_id = f"wcb-{uuid.uuid4()}"
+    fname = path.name
+
+    if media_type == 'image':
+        item = {"type": 2, "image_item": {"file_name": fname, "image_data": b64}}
+    else:
+        item = {"type": 4, "file_item": {"file_name": fname, "file_data": b64}}
+
+    resp = api_post(
+        base_url, "ilink/bot/sendmessage",
+        {
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": to_user_id,
+                "client_id": client_id,
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [item],
+            }
+        },
+        token,
+    )
+    if resp is None:
+        log.error(f"send_media 超时: {to_user_id} {fname}")
+        return False, "发送超时"
+    elif resp.get("ret") != 0:
+        log.error(f"send_media 失败: {to_user_id} {fname} ret={resp.get('ret')}")
+        return False, f"发送失败 ret={resp.get('ret')}"
+    log.info(f"send_media 成功: {to_user_id} {fname} ({size}B)")
+    return True, client_id
+
+
 def extract_text(msg):
     for item in msg.get("item_list", []):
         t = item.get("type")
@@ -924,6 +978,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /ls [path]               列出目录内容\n"
             "  /top [cpu|mem]           查看进程 Top20\n"
             "  /exec <shell cmd>        执行命令\n"
+            "  /send <文件路径>         发送图片/文件到微信\n"
             "  /status                  运行状态\n"
             "  /watchdog <cmd>          系统监控\n"
             "  /remind <时间> <消息>     定时提醒\n"
@@ -1208,6 +1263,22 @@ def handle_command(stripped, from_user, user_config, sessions,
                       + (f" (显示前 {len(entries)} 项)" if len(entries) >= 200 else ""))
         return True, "\n".join(lines)
 
+    # ---- /send 发送文件/图片到微信 ----
+    if stripped.startswith("/send "):
+        parts = stripped.split(maxsplit=1)
+        if len(parts) == 2:
+            file_path = parts[1].strip()
+            exec_cwd = cfg.get("cwd") or STARTUP_CWD
+            p = Path(file_path)
+            if not p.is_absolute():
+                p = Path(exec_cwd) / file_path
+            p = p.expanduser().resolve()
+            ok, result = send_media(base_url, token, from_user, str(p))
+            if ok:
+                return True, f"[OK] 已发送: {p.name}"
+            return True, f"[ERR] {result}"
+        return True, "[USAGE] /send <文件路径>"
+
     # ---- /exec ----
     if stripped.startswith("/exec "):
         parts = stripped.split(maxsplit=1)
@@ -1442,6 +1513,137 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, "[USAGE] 未知子命令（/watchdog help 查看帮助）"
 
     return False, ""
+
+
+# ==========================================================================
+#  Markdown → 微信文本转换
+# ==========================================================================
+
+
+def markdown_to_wechat(text):
+    """将 Claude 输出的 Markdown 转换为微信可读的纯文本"""
+    import re
+
+    # Step 1: 保护代码块
+    code_blocks = []
+
+    def _save_code(m):
+        code_blocks.append((m.group(1) or "").strip())
+        return f"\x00CODE{len(code_blocks) - 1}\x00"
+
+    # 匹配 ```lang\n...``` 或 ```...```
+    text = re.sub(
+        r'```(?:\w*\n)?(.*?)```',
+        _save_code, text, flags=re.DOTALL,
+    )
+
+    # Step 2: 转换标题
+    text = re.sub(r'^#{1,6}\s+(.+?)$', r'[\1]', text, flags=re.MULTILINE)
+
+    # Step 3: 转换粗体
+    text = re.sub(r'\*\*(.+?)\*\*', r'【\1】', text)
+
+    # Step 4: 转换斜体
+    text = re.sub(r'(?<!\*)\*([^*\n]+?)\*(?!\*)', r'「\1」', text)
+
+    # Step 5: 转换行内代码
+    text = re.sub(r'`([^`\n]+?)`', r"'\1'", text)
+
+    # Step 6: 转换链接
+    text = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'\1 (\2)', text)
+
+    # Step 7: 转换无序列表
+    text = re.sub(r'^(\s*)[-*]\s+', r'\1• ', text, flags=re.MULTILINE)
+
+    # Step 8: 转换水平线
+    text = re.sub(r'^[-*_]{3,}\s*$', '─' * 20, text, flags=re.MULTILINE)
+
+    # Step 9: 处理表格
+    text = _convert_tables(text)
+
+    # Step 10: 恢复代码块
+    for i, code in enumerate(code_blocks):
+        text = text.replace(f"\x00CODE{i}\x00", f"[CODE]\n{code}\n[/CODE]")
+
+    # Step 11: 清理多余空行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    return text.strip()
+
+
+def _convert_tables(text):
+    """将 Markdown 管道表转换为可读格式"""
+    import re
+
+    lines = text.split('\n')
+    result = []
+    table_rows = []
+
+    def _flush_table():
+        if not table_rows:
+            return
+        formatted = _format_table(table_rows)
+        if formatted:
+            result.append(formatted)
+        table_rows.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('|') and stripped.endswith('|'):
+            if re.match(r'^[\|\s\-:]+$', stripped):
+                continue  # 跳过分隔行
+            table_rows.append(stripped)
+        else:
+            _flush_table()
+            result.append(line)
+
+    _flush_table()
+    return '\n'.join(result)
+
+
+def _format_table(rows):
+    """格式化管道表为对齐纯文本"""
+    if not rows:
+        return ""
+
+    parsed = []
+    for row in rows:
+        cells = [c.strip() for c in row.split('|')[1:-1]]
+        parsed.append(cells)
+
+    if not parsed or not parsed[0]:
+        return ""
+
+    col_count = max(len(r) for r in parsed)
+    widths = [0] * col_count
+    for row in parsed:
+        for j, cell in enumerate(row):
+            if j < col_count:
+                widths[j] = max(widths[j], _char_width(cell))
+
+    def _pad(cell, w):
+        return cell + ' ' * (w - _char_width(cell))
+
+    out = []
+    sep = ' │ '
+    for i, row in enumerate(parsed):
+        padded = [_pad(row[j] if j < len(row) else "", widths[j]) for j in range(col_count)]
+        out.append(sep.join(padded))
+        if i == 0:
+            out.append('─' * (sum(widths) + 3 * (col_count - 1)))
+
+    return '\n'.join(out)
+
+
+def _char_width(s):
+    """估算字符串显示宽度（CJK 字符按 2 计算）"""
+    w = 0
+    for ch in s:
+        if '一' <= ch <= '鿿' or '　' <= ch <= '〿' or '＀' <= ch <= '￯':
+            w += 2
+        else:
+            w += 1
+    return w
 
 
 # ==========================================================================
@@ -1682,6 +1884,7 @@ def main_loop(session, sessions, user_config):
             pass
 
     def _send_reply(from_user, reply, ctx, retry=True):
+        reply = markdown_to_wechat(reply)
         chunks = split_long_text(reply)
         for chunk in chunks:
             for attempt in range(3 if retry else 1):
@@ -2018,7 +2221,7 @@ def main_loop(session, sessions, user_config):
                         "new", "list", "switch", "attach", "reset",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog", "login", "ls", "top", "history", "stop",
+                        "remind", "cleanup", "watchdog", "login", "ls", "top", "history", "stop", "send",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
                     # 1. 前缀匹配（用户输入的前几个字符）
@@ -2068,10 +2271,34 @@ def main_loop(session, sessions, user_config):
                 perm_mode = cfg.get("permission_mode", "auto")
 
                 def _claude_task(uid, txt, cwd, mdl, p_mode, cancel_evt):
+                    stream_buf = []
+                    last_stream_send = [0]
+
+                    def _on_stream(chunk, is_partial):
+                        stream_buf.append(chunk)
+                        now = time.time()
+                        total_chars = sum(len(c) for c in stream_buf)
+                        if total_chars >= 200 and now - last_stream_send[0] >= 2:
+                            merged = markdown_to_wechat(''.join(stream_buf))
+                            if merged.strip():
+                                send_message(base_url, token, uid,
+                                             f"[...]\n{merged}", ctx)
+                            stream_buf.clear()
+                            last_stream_send[0] = now
+
                     output, perm_pending, perm_text = ask_claude(
                         txt, uid, sessions, cwd=cwd, model=mdl,
                         permission_mode=p_mode, cancel_event=cancel_evt,
+                        on_stream=_on_stream,
                     )
+
+                    # 发送剩余流式缓冲
+                    if stream_buf:
+                        remaining = markdown_to_wechat(''.join(stream_buf))
+                        if remaining.strip():
+                            send_message(base_url, token, uid,
+                                         f"[...]\n{remaining}", ctx)
+
                     if perm_pending:
                         send_message(base_url, token, uid,
                                      f"[PERM] Claude 请求权限:\n{perm_text}"
