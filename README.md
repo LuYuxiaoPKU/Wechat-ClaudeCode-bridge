@@ -35,10 +35,11 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 
 ## Prerequisites / 前提
 
+- **操作系统**：Linux（推荐 Ubuntu 20.04+ / CentOS 7+）
 - **微信 ClawBot 插件**（iOS 微信 8.0.70+，需开通权限）
 - Python 3.9+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-- （可选）`psutil` 用于跨平台系统监控
+- （推荐）`psutil` 用于系统监控
 
 ## Quick Start / 快速开始
 
@@ -47,11 +48,22 @@ git clone https://github.com/LuYuxiaoPKU/Wechat-ClaudeCode-bridge.git
 cd Wechat-ClaudeCode-bridge
 pip install -r requirements.txt
 
+# 可选：安装到 PATH，之后在任何目录直接运行
+chmod +x bridge.py
+sudo ln -sf "$(pwd)/bridge.py" /usr/local/bin/wcb
+# 或者
+export PATH="$PATH:$(pwd)"
+echo 'export PATH="$PATH:'$(pwd)'"' >> ~/.bashrc
+
 # 首次运行 — 接受 GPLv3 条款 → 扫码登录
 python3 bridge.py --login
+# 或 (如已安装到 PATH)
+wcb --login
 
 # 后续运行 — 自动复用 token
 python3 bridge.py
+# 或
+wcb
 ```
 
 ### Docker
