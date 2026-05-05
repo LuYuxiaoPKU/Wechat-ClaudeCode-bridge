@@ -345,7 +345,7 @@ def send_typing(base_url, token, to_user_id):
 
 def send_message(base_url, token, to_user_id, text, context_token=""):
     client_id = f"wcb-{uuid.uuid4()}"
-    api_post(
+    resp = api_post(
         base_url, "ilink/bot/sendmessage",
         {
             "msg": {
@@ -360,6 +360,10 @@ def send_message(base_url, token, to_user_id, text, context_token=""):
         },
         token,
     )
+    if resp is None:
+        log.error(f"send_message 超时: {to_user_id} len={len(text)}")
+    elif resp.get("ret") != 0:
+        log.error(f"send_message 失败: {to_user_id} ret={resp.get('ret')}")
     return client_id
 
 
@@ -1622,13 +1626,18 @@ def main_loop(session, sessions, user_config):
         except Exception:
             pass
 
-    def _send_reply(from_user, reply, ctx):
+    def _send_reply(from_user, reply, ctx, retry=True):
         chunks = split_long_text(reply)
         for chunk in chunks:
-            try:
-                send_message(base_url, token, from_user, chunk, ctx)
-            except Exception as e:
-                log.warning(f"发送回复给 {from_user} 失败: {e}")
+            for attempt in range(3 if retry else 1):
+                try:
+                    send_message(base_url, token, from_user, chunk, ctx)
+                    break
+                except Exception as e:
+                    log.warning(f"发送回复给 {from_user} 失败 (attempt {attempt+1}): {e}")
+                    time.sleep(2)
+            else:
+                log.error(f"发送回复给 {from_user} 最终失败")
         return len(chunks)
 
     def _on_claude_done(future, from_user, ctx, start_time):
