@@ -52,6 +52,7 @@ MAX_WORKERS = 5
 WEB_PORT = 9876
 STREAM_INTERVAL = 3
 STREAM_MIN_CHARS = 100
+PERMISSION_TIMEOUT_S = 6 * 3600  # 权限请求等待超时
 
 _ALLOWED_ENV = os.environ.get("WCB_ALLOWED_USERS", "")
 ALLOWED_USERS = set(u.strip() for u in _ALLOWED_ENV.split(",") if u.strip())
@@ -1664,7 +1665,7 @@ def main_loop(session, sessions, user_config):
     last_request = {}
     in_flight = set()
     cancel_events = {}      # user_id → threading.Event
-    pending_permission = {}  # user_id → session_name
+    pending_permission = {}  # user_id → (session_name, requested_at)
 
     history_dir = DATA_DIR / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
@@ -1784,7 +1785,12 @@ def main_loop(session, sessions, user_config):
 
                 # ---- 待处理的权限确认 ----
                 if from_user in pending_permission:
-                    session_name = pending_permission.pop(from_user)
+                    session_name, requested_at = pending_permission.pop(from_user)
+                    # 检查是否超时
+                    if time.time() - requested_at > PERMISSION_TIMEOUT_S:
+                        send_message(base_url, token, from_user,
+                                     "[PERM] 权限请求已超时（6 小时），已自动取消", ctx)
+                        continue
                     answer = stripped.strip().lower()
                     if answer in ("yes", "y", "是", "允许", "同意", "ok", "no", "n",
                                   "否", "拒绝"):
@@ -1807,7 +1813,7 @@ def main_loop(session, sessions, user_config):
                     else:
                         send_message(base_url, token, from_user,
                                      "[PERM] 请回复 yes（批准）或 no（拒绝）", ctx)
-                        pending_permission[from_user] = session_name
+                        pending_permission[from_user] = (session_name, requested_at)
                     continue
 
                 # ---- 内置命令 ----
@@ -2069,9 +2075,12 @@ def main_loop(session, sessions, user_config):
                     if perm_pending:
                         send_message(base_url, token, uid,
                                      f"[PERM] Claude 请求权限:\n{perm_text}"
-                                     f"\n\n回复 yes（批准）或 no（拒绝）", ctx)
-                        pending_permission[uid] = \
-                            get_active_session_info(sessions, uid)[0]
+                                     f"\n\n回复 yes（批准）或 no（拒绝）"
+                                     f"\n（6 小时内有效，超时将自动取消）", ctx)
+                        pending_permission[uid] = (
+                            get_active_session_info(sessions, uid)[0],
+                            time.time(),
+                        )
                         return "[权限请求已转发，等待确认]"
                     return output
 
