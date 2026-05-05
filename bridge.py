@@ -1790,7 +1790,7 @@ def main_loop(session, sessions, user_config):
                         stats["in_flight"] = in_flight
                     else:
                         send_message(base_url, token, from_user,
-                                     "[PERM] 请回复 yes/no 确认权限", ctx)
+                                     "[PERM] 请回复 yes（批准）或 no（拒绝）", ctx)
                         pending_permission[from_user] = session_name
                     continue
 
@@ -2053,7 +2053,7 @@ def main_loop(session, sessions, user_config):
                     if perm_pending:
                         send_message(base_url, token, uid,
                                      f"[PERM] Claude 请求权限:\n{perm_text}"
-                                     f"\n\n回复 yes/no", ctx)
+                                     f"\n\n回复 yes（批准）或 no（拒绝）", ctx)
                         pending_permission[uid] = \
                             get_active_session_info(sessions, uid)[0]
                         return "[权限请求已转发，等待确认]"
