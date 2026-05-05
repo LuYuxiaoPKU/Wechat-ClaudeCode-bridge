@@ -94,7 +94,7 @@ docker-compose up -d
   /new <name>              新建命名会话
   /list                    列出所有会话
   /switch <name>           切换活跃会话
-  /clear                   清除当前会话
+  /reset                   重置当前会话（切回 default）
   /model <opus|sonnet|haiku> 切换模型
   /mode <auto|ask>         权限模式
 

@@ -892,7 +892,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /list                    列出所有会话\n"
             "  /switch <name>           切换活跃会话\n"
             "  /attach <uuid> [name]   接入外部会话\n"
-            "  /clear                   清除当前会话\n"
+            "  /reset                   重置当前会话\n"
             "  /model <opus|sonnet|haiku> 切换模型\n"
             "  /mode <auto|ask>         权限模式\n"
             "\n"
@@ -953,7 +953,7 @@ def handle_command(stripped, from_user, user_config, sessions,
     if stripped == "/list":
         names = list_sessions(sessions, from_user)
         _, active_name = get_active_session_info(sessions, from_user)
-        lines = [f"[SESSIONS] {len(names)} 个会话"]
+        lines = [f"[SESSIONS] {len(names)} 个会话 | 当前: {active_name}"]
         for i, n in enumerate(names, 1):
             marker = ">>" if n == active_name else "  "
             lines.append(f" {marker} {i}. {n}")
@@ -1022,40 +1022,51 @@ def handle_command(stripped, from_user, user_config, sessions,
             f"3. /attach <uuid> 接入外部会话"
         )
 
-    # ---- /clear ----
-    if stripped == "/clear":
+    # ---- /reset ----
+    if stripped == "/reset":
         active_name, session_id = get_active_session_info(sessions, from_user)
-        pop_session(sessions, from_user)
+        if active_name == "default":
+            return True, "[ERR] default 会话不可清除"
+        # 从列表中移除当前会话，切回 default
+        entry = sessions.get(from_user)
+        if isinstance(entry, dict):
+            names = entry.get("names", ["default"])
+            if active_name in names:
+                names.remove(active_name)
+            entry["_external"].pop(active_name, None) if "_external" in entry else None
+            entry["active"] = "default"
+            save_user_sessions(sessions)
         return True, (
-            f"[OK] 会话 '{active_name}' 已清除\n"
+            f"[OK] 会话 '{active_name}' 已清除，已切回 default\n"
             f"\n"
             f"Claude 对话历史未删除，仍保留在磁盘上。\n"
             f"找回方式: /attach {session_id} {active_name}"
         )
 
-    if stripped.startswith("/clear "):
+    if stripped.startswith("/reset "):
         name = stripped.split(maxsplit=1)[1].strip()
+        if name == "default":
+            return True, "[ERR] default 会话不可清除"
         names = list_sessions(sessions, from_user)
         if name not in names:
             return True, f"[ERR] 会话不存在: {name}（/list 查看所有会话）"
         _, active_name = get_active_session_info(sessions, from_user)
-        # 获取要删除的会话 UUID（用于提示找回）
         entry = sessions.get(from_user, {})
         ext_map = entry.get("_external", {}) if isinstance(entry, dict) else {}
         if name in ext_map:
             deleted_uuid = ext_map[name]
         else:
             deleted_uuid = user_session_uuid(from_user, name)
-        if name == active_name:
-            pop_session(sessions, from_user)
-        else:
-            if isinstance(entry, dict):
-                entry["names"].remove(name)
-                entry["_external"].pop(name, None) if "_external" in entry else None
-                save_user_sessions(sessions)
+        if isinstance(entry, dict):
+            entry["names"].remove(name)
+            entry["_external"].pop(name, None) if "_external" in entry else None
+            if name == active_name:
+                entry["active"] = "default"
+            save_user_sessions(sessions)
         return True, (
-            f"[OK] 会话 '{name}' 已清除\n"
-            f"\n"
+            f"[OK] 会话 '{name}' 已清除"
+            + (f"，已切回 default" if name == active_name else "")
+            + f"\n\n"
             f"Claude 对话历史未删除，仍保留在磁盘上。\n"
             f"找回方式: /attach {deleted_uuid} {name}"
         )
@@ -1982,7 +1993,7 @@ def main_loop(session, sessions, user_config):
                 if stripped.startswith("/"):
                     ALL_COMMANDS = [
                         "help", "cwd", "pwd", "dir",
-                        "new", "list", "switch", "attach", "clear",
+                        "new", "list", "switch", "attach", "reset",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
                         "remind", "cleanup", "watchdog", "login", "ls", "top", "history", "stop",
