@@ -1078,7 +1078,7 @@ def handle_command(stripped, from_user, user_config, sessions,
 
         sort_key = "memory_percent" if sort_by in ("mem", "memory") else "cpu_percent"
         procs = []
-        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+        for p in psutil.process_iter(["pid", "name", "username", "cpu_percent", "memory_percent"]):
             try:
                 info = p.info
                 if info["cpu_percent"] > 0 or info["memory_percent"] > 0.1:
@@ -1090,11 +1090,12 @@ def handle_command(stripped, from_user, user_config, sessions,
         procs = procs[:20]
 
         label = "MEM%" if sort_key == "memory_percent" else "CPU%"
-        lines = [f"```", f"{'PID':>8} {'NAME':<20} {'CPU%':>6} {'MEM%':>6}"]
+        lines = [f"```", f"{'PID':>8} {'USER':<10} {'NAME':<18} {'CPU%':>6} {'MEM%':>6}"]
         for p in procs:
-            name = (p["name"] or "?")[:20]
+            user = (p.get("username") or "?")[:10]
+            name = (p["name"] or "?")[:18]
             lines.append(
-                f"{p['pid']:>8} {name:<20} "
+                f"{p['pid']:>8} {user:<10} {name:<18} "
                 f"{p['cpu_percent'] or 0:>5.1f} {p['memory_percent'] or 0:>5.1f}"
             )
         lines.append(f"```")
