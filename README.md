@@ -48,22 +48,15 @@ git clone https://github.com/LuYuxiaoPKU/Wechat-ClaudeCode-bridge.git
 cd Wechat-ClaudeCode-bridge
 pip install -r requirements.txt
 
-# 可选：安装到 PATH，之后在任何目录直接运行
-chmod +x bridge.py
-sudo ln -sf "$(pwd)/bridge.py" /usr/local/bin/wcb
-# 或者
+# 可选：添加到 PATH，之后在任何目录直接运行 bridge.py
 export PATH="$PATH:$(pwd)"
 echo 'export PATH="$PATH:'$(pwd)'"' >> ~/.bashrc
 
 # 首次运行 — 接受 GPLv3 条款 → 扫码登录
 python3 bridge.py --login
-# 或 (如已安装到 PATH)
-wcb --login
 
 # 后续运行 — 自动复用 token
 python3 bridge.py
-# 或
-wcb
 ```
 
 ### Docker
