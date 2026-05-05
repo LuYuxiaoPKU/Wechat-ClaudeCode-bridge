@@ -10,6 +10,7 @@ wechat-claude-bridge — 微信 ClawBot ↔ Claude Code 桥接
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -45,7 +46,7 @@ USER_CONFIG_FILE = DATA_DIR / "user_config.json"
 REMINDERS_FILE = DATA_DIR / "reminders.json"
 WATCHDOG_FILE = DATA_DIR / "watchdog.json"
 LOG_FILE = DATA_DIR / "bridge.log"
-POLL_TIMEOUT_S = 38
+POLL_TIMEOUT_S = 15
 RATE_LIMIT_S = 5
 MAX_MSG_LEN = 2000
 MAX_WORKERS = 5
@@ -56,6 +57,7 @@ PERMISSION_TIMEOUT_S = 6 * 3600  # 权限请求等待超时
 
 _ALLOWED_ENV = os.environ.get("WCB_ALLOWED_USERS", "")
 ALLOWED_USERS = set(u.strip() for u in _ALLOWED_ENV.split(",") if u.strip())
+# 注：ALLOWED_USERS 在进程启动时计算一次，运行时不刷新
 
 PERMISSION_MARKERS = [
     "Do you want to proceed",
@@ -92,19 +94,23 @@ log = logging.getLogger(__name__)
 # ==========================================================================
 
 
+_WECHAT_UIN = None
+
+
 def random_wechat_uin():
-    rand_uint32 = random.randint(0, 0xFFFFFFFF)
-    return base64.b64encode(str(rand_uint32).encode()).decode()
+    global _WECHAT_UIN
+    if _WECHAT_UIN is None:
+        rand_uint32 = random.randint(0, 0xFFFFFFFF)
+        _WECHAT_UIN = base64.b64encode(str(rand_uint32).encode()).decode()
+    return _WECHAT_UIN
 
 
-def build_headers(token=None, body=None):
+def build_headers(token=None):
     headers = {
         "Content-Type": "application/json",
         "AuthorizationType": "ilink_bot_token",
         "X-WECHAT-UIN": random_wechat_uin(),
     }
-    if body is not None:
-        headers["Content-Length"] = str(len(json.dumps(body).encode("utf-8")))
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -186,7 +192,7 @@ def api_get(base_url, path):
 def api_post(base_url, endpoint, body, token, timeout_ms=15000):
     url = f"{base_url.rstrip('/')}/{endpoint}"
     payload = {**body, "base_info": {"channel_version": CHANNEL_VERSION}}
-    headers = build_headers(token, payload)
+    headers = build_headers(token)
     try:
         resp = requests.post(url, headers=headers, json=payload,
                              timeout=timeout_ms / 1000)
@@ -268,11 +274,13 @@ def login(on_qr=None, on_status=None):
     logger("[LOGIN] 开始微信扫码登录...")
 
     qr_resp = api_get(DEFAULT_BASE_URL, f"ilink/bot/get_bot_qrcode?bot_type={BOT_TYPE}")
-    current_qrcode = qr_resp["qrcode"]
+    current_qrcode = qr_resp.get("qrcode")
+    if not current_qrcode:
+        raise RuntimeError(f"API 未返回 qrcode: {json.dumps(qr_resp)[:200]}")
 
     logger("[QR] 请用微信扫描以下二维码：")
     if on_qr:
-        on_qr(qr_resp["qrcode_img_content"])
+        on_qr(qr_resp.get("qrcode_img_content", ""))
     else:
         render_qr_terminal(qr_resp["qrcode_img_content"])
 
@@ -340,8 +348,8 @@ def send_typing(base_url, token, to_user_id):
     try:
         api_post(base_url, "ilink/bot/sendtyping",
                  {"to_user_id": to_user_id}, token, timeout_ms=5000)
-    except Exception:
-        pass  # sendtyping 失败不影响主流程
+    except Exception as e:
+        log.debug(f"send_typing failed: {e}")
 
 
 def send_message(base_url, token, to_user_id, text, context_token=""):
@@ -767,9 +775,6 @@ def run_claude_stream(text, cwd=None, extra_args=None, timeout_s=300,
     cmd = ["claude", "-p", "--output-format", "text"]
     if extra_args:
         cmd.extend(extra_args)
-    else:
-        cmd.append("--permission-mode")
-        cmd.append("auto")
 
     env = {**os.environ, "CLAUDE_CODE_SIMPLE": "1",
            "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
@@ -809,70 +814,79 @@ def run_claude_stream(text, cwd=None, extra_args=None, timeout_s=300,
     reader.start()
     threading.Thread(target=_read_stderr, daemon=True).start()
 
-    start = time.time()
-    sent_pos = 0
-    last_output_time = start
+    try:
+        start = time.time()
+        sent_pos = 0
+        last_output_time = start
 
-    while not read_done.is_set() and proc.poll() is None:
-        # 检查取消信号
-        if cancel_event and cancel_event.is_set():
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            yield (False, "[CANCELLED] 用户中断了 Claude 处理")
-            return
+        while not read_done.is_set() and proc.poll() is None:
+            # 检查取消信号
+            if cancel_event and cancel_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                yield (False, "[CANCELLED] 用户中断了 Claude 处理")
+                return
 
-        elapsed = time.time() - start
-        if elapsed > timeout_s:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            yield (True, "\n[ERR] 处理超时，请简化您的问题")
-            return
+            elapsed = time.time() - start
+            if elapsed > timeout_s:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                yield (True, "\n[ERR] 处理超时，请简化您的问题")
+                return
+
+            current = "".join(output_chunks)
+            new_text = current[sent_pos:]
+            if len(new_text) >= STREAM_MIN_CHARS:
+                yield (True, new_text)
+                sent_pos = len(current)
+                last_output_time = time.time()
+
+            # 检测权限请求：进程存活但 10 秒无新输出 → 可能卡在权限确认
+            if "--permission-mode" not in (extra_args or []):
+                if time.time() - last_output_time > 10 and current[sent_pos:].strip():
+                    # 检查是否有权限请求特征
+                    tail = current[-500:]
+                    if any(m.lower() in tail.lower() for m in PERMISSION_MARKERS):
+                        remaining = current[sent_pos:]
+                        if remaining.strip():
+                            yield (True, remaining)
+                        yield (False, "[PERMISSION_REQUIRED]" + tail[-300:])
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        return
+
+            time.sleep(STREAM_INTERVAL)
+
+        reader.join(timeout=5)
+        proc.wait(timeout=5)
 
         current = "".join(output_chunks)
-        new_text = current[sent_pos:]
-        if len(new_text) >= STREAM_MIN_CHARS:
-            yield (True, new_text)
-            sent_pos = len(current)
-            last_output_time = time.time()
+        remaining = current[sent_pos:]
+        if remaining.strip():
+            yield (True, remaining)
 
-        # 检测权限请求：进程存活但 10 秒无新输出 → 可能卡在权限确认
-        if extra_args and "--permission-mode" not in extra_args:
-            if time.time() - last_output_time > 10 and current[sent_pos:].strip():
-                # 检查是否有权限请求特征
-                tail = current[-500:]
-                if any(m.lower() in tail.lower() for m in PERMISSION_MARKERS):
-                    remaining = current[sent_pos:]
-                    if remaining.strip():
-                        yield (True, remaining)
-                    yield (False, "[PERMISSION_REQUIRED]" + tail[-300:])
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                    return
+        stderr = "".join(stderr_chunks).strip()
+        if proc.returncode != 0:
+            yield (True, f"\n[ERR] {stderr or '(无错误输出)'}")
+        else:
+            yield (False, current.strip())
 
-        time.sleep(STREAM_INTERVAL)
-
-    reader.join(timeout=5)
-    proc.wait(timeout=5)
-
-    current = "".join(output_chunks)
-    remaining = current[sent_pos:]
-    if remaining.strip():
-        yield (True, remaining)
-
-    stderr = "".join(stderr_chunks).strip()
-    if proc.returncode != 0:
-        yield (True, f"\n[ERR] {stderr or '(无错误输出)'}")
-    else:
-        yield (False, current.strip())
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 def ask_claude(text, user_id, sessions, cwd=None,
@@ -883,9 +897,11 @@ def ask_claude(text, user_id, sessions, cwd=None,
     permission_pending=True 表示 Claude 请求权限确认，需要用户回复。
     """
     session_name, session_id = get_active_session_info(sessions, user_id)
-    has_session = session_name in (sessions.get(user_id, {}) if isinstance(
-        sessions.get(user_id), dict) else {}).get("names", ["default"]
-    ) if isinstance(sessions.get(user_id), dict) else user_id in sessions
+    entry = sessions.get(user_id)
+    if isinstance(entry, dict):
+        has_session = session_name in entry.get("names", ["default"])
+    else:
+        has_session = user_id in sessions
 
     extra = []
     if permission_mode == "auto":
@@ -1102,7 +1118,8 @@ def handle_command(stripped, from_user, user_config, sessions,
             names = entry.get("names", ["default"])
             if active_name in names:
                 names.remove(active_name)
-            entry["_external"].pop(active_name, None) if "_external" in entry else None
+            if "_external" in entry:
+                entry["_external"].pop(active_name, None)
             entry["active"] = "default"
             save_user_sessions(sessions)
         return True, (
@@ -1156,7 +1173,6 @@ def handle_command(stripped, from_user, user_config, sessions,
         m = cfg.get("permission_mode", "auto")
         return True, f"[MODE] 当前权限模式: {m}"
 
-    # ---- /exec ----
     # ---- /top 进程列表 ----
     if stripped == "/top" or stripped.startswith("/top "):
         sort_by = stripped[4:].strip().lower() if len(stripped) > 4 else "cpu"
@@ -1271,12 +1287,11 @@ def handle_command(stripped, from_user, user_config, sessions,
                 shell = "cmd"
             else:
                 shell = os.environ.get("SHELL", "/bin/sh")
+            log.warning(f"/exec user={from_user} cwd={exec_cwd} cmd={shell_cmd[:200]}")
             try:
                 result = subprocess.run(
                     shell_cmd, shell=True, capture_output=True,
                     encoding="utf-8", timeout=30, cwd=exec_cwd, executable=shell,
-                    env={"PATH": os.environ.get("PATH", os.defpath),
-                         "HOME": os.environ.get("HOME", os.path.expanduser("~"))},
                 )
                 out = result.stdout.strip() or "(无输出)"
                 if result.returncode != 0:
@@ -1503,7 +1518,6 @@ def handle_command(stripped, from_user, user_config, sessions,
 
 def markdown_to_wechat(text):
     """将 Claude 输出的 Markdown 转换为微信可读的纯文本"""
-    import re
 
     # Step 1: 保护代码块
     code_blocks = []
@@ -1554,7 +1568,6 @@ def markdown_to_wechat(text):
 
 def _convert_tables(text):
     """将 Markdown 管道表转换为可读格式"""
-    import re
 
     lines = text.split('\n')
     result = []
@@ -1716,11 +1729,10 @@ class WebHandler(BaseHTTPRequestHandler):
 
 
 def run_web(stats, push_cb=None):
-    handler = type("_H", (WebHandler,), {
-        "stats_ref": stats, "push_callback": push_cb
-    })
+    WebHandler.stats_ref = stats
+    WebHandler.push_callback = push_cb
     try:
-        server = HTTPServer(("127.0.0.1", WEB_PORT), handler)
+        server = HTTPServer(("127.0.0.1", WEB_PORT), WebHandler)
         server.serve_forever()
     except Exception as e:
         log.warning(f"Web 控制台启动失败: {e}")
@@ -1756,8 +1768,6 @@ def check_reminders(reminders, base_url, token, executor, sessions, user_config)
             # 重复提醒则更新下次时间
             if r.get("repeat"):
                 r["at"] = now + r["repeat"]
-            else:
-                pass  # 标记删除
 
     # 删除已触发的非重复提醒
     for i in reversed(triggered):
@@ -1801,11 +1811,19 @@ def main_loop(session, sessions, user_config):
 
     # HTTP push 回调
     def _on_push(user_id, text):
-        executor.submit(
+        future = executor.submit(
             ask_claude, text, user_id, sessions,
             cwd=user_config.get(user_id, {}).get("cwd"),
             permission_mode=user_config.get(user_id, {}).get("permission_mode", "auto"),
         )
+        def _push_done(f):
+            try:
+                reply = f.result()
+                if reply and isinstance(reply, str):
+                    _send_reply(user_id, reply, "")
+            except Exception as e:
+                log.warning(f"HTTP push 回复失败: {e}")
+        future.add_done_callback(_push_done)
 
     web_thread = threading.Thread(
         target=run_web, args=(stats, _on_push), daemon=True
@@ -1856,9 +1874,8 @@ def main_loop(session, sessions, user_config):
     def _save_history(uid, role, content):
         try:
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            (history_dir / f"{uid}.md").open("a", encoding="utf-8").write(
-                f"## {ts} [{role}]\n{content}\n\n"
-            )
+            with (history_dir / f"{uid}.md").open("a", encoding="utf-8") as f:
+                f.write(f"## {ts} [{role}]\n{content}\n\n")
         except Exception:
             pass
 
@@ -1962,6 +1979,7 @@ def main_loop(session, sessions, user_config):
                 # ---- //逃逸：将 /cmd 原样发送给 Claude ----
                 if stripped.startswith("//"):
                     text = stripped[1:]  # 去掉一个 /，变成 /cmd
+                    stripped = text.strip()
 
                 cfg = user_config.setdefault(from_user, {})
 
@@ -2156,16 +2174,15 @@ def main_loop(session, sessions, user_config):
                         if ":" in time_str:
                             # 每天固定时间: 9:00
                             hh, mm = map(int, time_str.split(":"))
-                            now_ts = time.time()
-                            target = time.mktime(time.localtime()[:3] +
-                                                 (0, 0, 0, 0, 0, 0)) + hh * 3600 + mm * 60
-                            if target <= now_ts:
-                                target += 86400
-                            at_time = target
+                            import datetime
+                            now = datetime.datetime.now()
+                            target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                            if target <= now:
+                                target += datetime.timedelta(days=1)
+                            at_time = target.timestamp()
                             repeat = 86400
                         else:
                             # 相对时间: 30m, 2h
-                            import re
                             m = re.match(r"(\d+)\s*(m|min|h|hour)", time_str)
                             if m:
                                 val = int(m.group(1))
@@ -2307,18 +2324,20 @@ def main_loop(session, sessions, user_config):
             log.warning(f"网络错误: {e}")
             print(f"[WARN] 网络错误: {e}，3s 后重试...")
             time.sleep(3)
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
             err_str = str(e)
             log.error(f"轮询出错: {err_str}")
             if "session timeout" in err_str.lower() or "-14" in err_str:
                 print("[ERR] Session 已过期，请重新运行: python3 bridge.py --login")
-                sys.exit(1)
+                running = False
+                break
             print(f"[WARN] 轮询出错: {err_str}，3s 后重试...")
             time.sleep(3)
 
     if in_flight:
-        print(f"[BYE] 等待 {len(in_flight)} 个进行中的任务完成...")
-        executor.shutdown(wait=True, cancel_futures=False)
+        print(f"[BYE] 等待 {len(in_flight)} 个进行中的任务完成（最多 10s）...")
+        # 取消所有进行中的 future，避免无限挂起
+        executor.shutdown(wait=False, cancel_futures=True)
     else:
         executor.shutdown(wait=False)
 
