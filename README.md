@@ -5,6 +5,8 @@
 Control Claude Code CLI via WeChat messages. Code, debug, and manage files from anywhere using WeChat.
 
 > Built with **Claude Code**, powered by **DeepSeek V4 Pro[1m]**
+>
+> 新手入门请阅读 **[TUTORIAL.md / 上手指南](./TUTORIAL.md)**（20 分钟完成部署）
 
 ```
                         iLink API (HTTPS long polling)
