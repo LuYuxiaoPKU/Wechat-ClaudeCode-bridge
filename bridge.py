@@ -343,15 +343,6 @@ def get_updates(base_url, token, buf=""):
     return resp
 
 
-def send_typing(base_url, token, to_user_id):
-    """发送'正在输入'状态"""
-    try:
-        api_post(base_url, "ilink/bot/sendtyping",
-                 {"to_user_id": to_user_id}, token, timeout_ms=5000)
-    except Exception as e:
-        log.debug(f"send_typing failed: {e}")
-
-
 def send_message(base_url, token, to_user_id, text, context_token=""):
     client_id = f"wcb-{uuid.uuid4()}"
     resp = api_post(
@@ -2256,7 +2247,6 @@ def main_loop(session, sessions, user_config):
                 # ---- 转发 Claude ----
                 send_message(base_url, token, from_user,
                              "[THINK] Claude 正在思考...", ctx)
-                send_typing(base_url, token, from_user)
 
                 _save_history(from_user, "User", text)
 

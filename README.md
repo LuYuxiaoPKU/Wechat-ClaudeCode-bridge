@@ -11,7 +11,7 @@ Control Claude Code CLI via WeChat messages. Code, debug, and manage files from 
 ```
                         iLink API (HTTPS long polling)
   WeChat             <==================================>  bridge.py   <--->  Claude Code CLI
- (ClawBot)             sendmessage / sendtyping          (~2400 lines)         (node)
+ (ClawBot)             sendmessage                   (~2400 lines)         (node)
 
                                                              |
   External Systems      HTTP POST            .---------------+---------------.
@@ -177,8 +177,7 @@ bridge.py (~2400 lines)
 ├── 消息收发 (iLink API)
 │   ├── get_updates()          长轮询收消息
 │   ├── send_message()         发送文本消息
-│   ├── send_media()           发送图片/文件消息
-│   └── send_typing()          "正在输入" 状态
+│   └── send_media()           发送图片/文件消息
 │
 ├── 命令分发
 │   ├── handle_command()       21 个内置命令
@@ -238,7 +237,6 @@ curl -X POST http://127.0.0.1:9876/push \
 | `ilink/bot/get_qrcode_status` | GET | 查询扫码状态 |
 | `ilink/bot/getupdates` | POST | 长轮询收消息 |
 | `ilink/bot/sendmessage` | POST | 发送消息（文本/图片/文件） |
-| `ilink/bot/sendtyping` | POST | "正在输入"状态 |
 
 鉴权：`Authorization: Bearer <token>` + `AuthorizationType: ilink_bot_token`
 
