@@ -363,7 +363,8 @@ def send_message(base_url, token, to_user_id, text, context_token=""):
     if resp is None:
         log.error(f"send_message 超时: {to_user_id} len={len(text)}")
     elif resp.get("ret") != 0:
-        log.error(f"send_message 失败: {to_user_id} ret={resp.get('ret')}")
+        log.error(f"send_message 失败: {to_user_id} ret={resp.get('ret')} "
+                  f"resp={json.dumps(resp, ensure_ascii=False)[:300]}")
     return client_id
 
 
@@ -762,13 +763,21 @@ def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300
     while not read_done.is_set() and proc.poll() is None:
         # 检查取消信号
         if cancel_event and cancel_event.is_set():
-            proc.kill()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
             yield (False, "[CANCELLED] 用户中断了 Claude 处理")
             return
 
         elapsed = time.time() - start
         if elapsed > timeout_s:
-            proc.kill()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
             yield (True, "\n[ERR] 处理超时，请简化您的问题")
             return
 
@@ -789,7 +798,11 @@ def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300
                     if remaining.strip():
                         yield (True, remaining)
                     yield (False, "[PERMISSION_REQUIRED]" + tail[-300:])
-                    proc.kill()
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
                     return
 
         time.sleep(STREAM_INTERVAL)
@@ -851,6 +864,9 @@ def ask_claude(text, user_id, sessions, cwd=None, model=None,
     # 尝试 resume
     if has_session:
         output, perm = _call(extra + ["--resume", session_id])
+        if "already in use" in output.lower():
+            time.sleep(2)
+            output, perm = _call(extra + ["--resume", session_id])
         if perm:
             return output, True, perm
         if output and not output.startswith("[ERR]"):
