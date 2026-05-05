@@ -701,7 +701,8 @@ def watchdog_thread_fn(base_url, token):
 # ==========================================================================
 
 
-def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300):
+def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300,
+                      cancel_event=None):
     """
     使用 subprocess.Popen 执行 claude CLI，流式返回增量文本。
 
@@ -759,6 +760,12 @@ def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300
     last_output_time = start
 
     while not read_done.is_set() and proc.poll() is None:
+        # 检查取消信号
+        if cancel_event and cancel_event.is_set():
+            proc.kill()
+            yield (False, "[CANCELLED] 用户中断了 Claude 处理")
+            return
+
         elapsed = time.time() - start
         if elapsed > timeout_s:
             proc.kill()
@@ -803,7 +810,7 @@ def run_claude_stream(text, cwd=None, model=None, extra_args=None, timeout_s=300
 
 
 def ask_claude(text, user_id, sessions, cwd=None, model=None,
-               permission_mode="auto", on_stream=None):
+               permission_mode="auto", on_stream=None, cancel_event=None):
     """
     调用 claude CLI 处理消息。返回 (output, permission_pending, permission_text)。
 
@@ -824,7 +831,8 @@ def ask_claude(text, user_id, sessions, cwd=None, model=None,
         acc = ""
         perm_text = ""
         for is_partial, chunk in run_claude_stream(
-            text, cwd=cwd, model=model, extra_args=extra_args
+            text, cwd=cwd, model=model, extra_args=extra_args,
+            cancel_event=cancel_event,
         ):
             if is_partial:
                 if chunk.startswith("[PERMISSION_REQUIRED]"):
@@ -903,6 +911,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /watchdog <cmd>          系统监控\n"
             "  /remind <时间> <消息>     定时提醒\n"
             "  /history [N]            回看最近 N 轮对话\n"
+            "  /stop                    中断正在处理的请求\n"
             "  /cleanup <target>        清理缓存\n"
             "  /login                   重新扫码登录\n"
             "```\n"
@@ -1627,6 +1636,7 @@ def main_loop(session, sessions, user_config):
     contacted_users = set()
     last_request = {}
     in_flight = set()
+    cancel_events = {}      # user_id → threading.Event
     pending_permission = {}  # user_id → session_name
 
     history_dir = DATA_DIR / "history"
@@ -1722,6 +1732,22 @@ def main_loop(session, sessions, user_config):
                     continue
 
                 stripped = text.strip()
+
+                # ---- /stop 中断 Claude（优先处理，不受限流影响） ----
+                if stripped == "/stop":
+                    if from_user not in in_flight:
+                        send_message(base_url, token, from_user,
+                                     "[STOP] 当前没有正在处理的请求", ctx)
+                    else:
+                        ce = cancel_events.get(from_user)
+                        if ce:
+                            ce.set()
+                            send_message(base_url, token, from_user,
+                                         "[STOP] 已发送中断信号，正在取消...", ctx)
+                        else:
+                            send_message(base_url, token, from_user,
+                                         "[STOP] 无法取消（请求尚未启动）", ctx)
+                    continue
 
                 # ---- //逃逸：将 /cmd 原样发送给 Claude ----
                 if stripped.startswith("//"):
@@ -1959,7 +1985,7 @@ def main_loop(session, sessions, user_config):
                         "new", "list", "switch", "attach", "clear",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog", "login", "ls", "top", "history",
+                        "remind", "cleanup", "watchdog", "login", "ls", "top", "history", "stop",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
                     # 1. 前缀匹配（用户输入的前几个字符）
@@ -2008,10 +2034,10 @@ def main_loop(session, sessions, user_config):
                 stats["in_flight"] = in_flight
                 perm_mode = cfg.get("permission_mode", "auto")
 
-                def _claude_task(uid, txt, cwd, mdl, p_mode):
+                def _claude_task(uid, txt, cwd, mdl, p_mode, cancel_evt):
                     output, perm_pending, perm_text = ask_claude(
                         txt, uid, sessions, cwd=cwd, model=mdl,
-                        permission_mode=p_mode,
+                        permission_mode=p_mode, cancel_event=cancel_evt,
                     )
                     if perm_pending:
                         send_message(base_url, token, uid,
@@ -2024,14 +2050,17 @@ def main_loop(session, sessions, user_config):
 
                 cwd = cfg.get("cwd")
                 model = cfg.get("model")
+                cancel_evt = threading.Event()
+                cancel_events[from_user] = cancel_evt
                 future = executor.submit(
-                    _claude_task, from_user, text, cwd, model, perm_mode
+                    _claude_task, from_user, text, cwd, model, perm_mode,
+                    cancel_evt,
                 )
                 call_start = time.time()
-                future.add_done_callback(
-                    lambda f, uid=from_user, c=ctx, st=call_start:
-                        _on_claude_done(f, uid, c, st)
-                )
+                def _cleanup_and_callback(f, uid=from_user, c=ctx, st=call_start):
+                    cancel_events.pop(uid, None)
+                    _on_claude_done(f, uid, c, st)
+                future.add_done_callback(_cleanup_and_callback)
 
         except requests.RequestException as e:
             log.warning(f"网络错误: {e}")
