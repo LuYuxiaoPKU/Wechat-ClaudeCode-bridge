@@ -991,7 +991,16 @@ def handle_command(stripped, from_user, user_config, sessions,
         return True, "[USAGE] /attach <session_uuid> [名称]"
 
     if stripped == "/attach":
-        return True, "[USAGE] /attach <session_uuid> [名称]\n\n在 Claude Code CLI 中用 /resume 查看 session UUID"
+        cwd = cfg.get("cwd", os.getcwd())
+        return True, (
+            f"[USAGE] /attach <session_uuid> [名称]\n"
+            f"\n"
+            f"当前工作目录: {cwd}\n"
+            f"\n"
+            f"1. 在 Claude Code CLI 中查看 session UUID\n"
+            f"2. 确保 /cwd 指向正确的项目目录\n"
+            f"3. /attach <uuid> 接入外部会话"
+        )
 
     # ---- /clear ----
     if stripped == "/clear":
