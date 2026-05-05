@@ -898,6 +898,7 @@ def handle_command(stripped, from_user, user_config, sessions,
             "  /status                  运行状态\n"
             "  /watchdog <cmd>          系统监控\n"
             "  /remind <时间> <消息>     定时提醒\n"
+            "  /history [N]            回看最近 N 轮对话\n"
             "  /cleanup <target>        清理缓存\n"
             "  /login                   重新扫码登录\n"
             "```\n"
@@ -1707,6 +1708,47 @@ def main_loop(session, sessions, user_config):
                     print(f"   [CMD] {reply[:80]}")
                     continue
 
+                # ---- /history [N] 回看对话 ----
+                if stripped == "/history" or stripped.startswith("/history "):
+                    n = 3
+                    if stripped.startswith("/history "):
+                        try:
+                            n = int(stripped.split()[1])
+                        except ValueError:
+                            pass
+                    n = max(1, min(n, 20))
+                    user_file = history_dir / f"{from_user}.md"
+                    if not user_file.exists():
+                        send_message(base_url, token, from_user,
+                                     "[HISTORY] 暂无对话记录", ctx)
+                        continue
+                    blocks = []
+                    current_block = None
+                    for line in user_file.read_text(encoding="utf-8").splitlines():
+                        if line.startswith("## ") and "[User]" in line:
+                            if current_block:
+                                blocks.append(current_block)
+                            current_block = [line]
+                        elif line.startswith("## ") and "[Claude]" in line:
+                            if current_block:
+                                blocks.append(current_block)
+                            current_block = [line]
+                        elif current_block is not None:
+                            current_block.append(line)
+                    if current_block:
+                        blocks.append(current_block)
+                    recent = blocks[-n * 2:]  # n 轮对话 = 2n 个 block
+                    if not recent:
+                        send_message(base_url, token, from_user,
+                                     "[HISTORY] 暂无对话记录", ctx)
+                        continue
+                    out = [f"[HISTORY] 最近 {len(recent)//2} 轮对话", "```"]
+                    for b in recent:
+                        out.append("\n".join(b))
+                    out.append("```")
+                    send_message(base_url, token, from_user, "\n".join(out), ctx)
+                    continue
+
                 # ---- /login 重新登录 ----
                 if stripped == "/login":
                     def _re_login():
@@ -1858,7 +1900,7 @@ def main_loop(session, sessions, user_config):
                         "new", "list", "switch", "attach", "clear",
                         "model", "mode", "exec", "status",
                         "cpu", "mem", "memory", "disk", "df",
-                        "remind", "cleanup", "watchdog", "login", "ls", "top",
+                        "remind", "cleanup", "watchdog", "login", "ls", "top", "history",
                     ]
                     cmd_name = stripped.split()[0].lstrip("/").lower()
                     # 1. 前缀匹配（用户输入的前几个字符）
