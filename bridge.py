@@ -1802,14 +1802,18 @@ def main_loop(session, sessions, user_config):
 
     # HTTP push 回调
     def _on_push(user_id, text):
-        future = executor.submit(
-            ask_claude, text, user_id, sessions,
-            cwd=user_config.get(user_id, {}).get("cwd"),
-            permission_mode=user_config.get(user_id, {}).get("permission_mode", "auto"),
-        )
+        def _push_task():
+            output, _, _ = ask_claude(
+                text, user_id, sessions,
+                cwd=user_config.get(user_id, {}).get("cwd"),
+                permission_mode=user_config.get(user_id, {}).get("permission_mode", "auto"),
+            )
+            return output, False
+
+        future = executor.submit(_push_task)
         def _push_done(f):
             try:
-                reply = f.result()
+                reply, _ = f.result()
                 if reply and isinstance(reply, str):
                     _send_reply(user_id, reply, "")
             except Exception as e:
@@ -1887,11 +1891,14 @@ def main_loop(session, sessions, user_config):
 
     def _on_claude_done(future, from_user, ctx, start_time):
         try:
-            reply = future.result()
+            reply, stream_sent = future.result()
         except Exception as e:
-            reply = f"[ERR] {e}"
+            reply, stream_sent = f"[ERR] {e}", False
 
-        n_chunks = _send_reply(from_user, reply, ctx)
+        if stream_sent:
+            n_chunks = 0  # 流式已推送，跳过最终回复避免重复
+        else:
+            n_chunks = _send_reply(from_user, reply, ctx)
 
         elapsed = time.time() - start_time
         preview = reply[:80].replace("\n", " ")
@@ -1990,11 +1997,15 @@ def main_loop(session, sessions, user_config):
                         set_active_session(sessions, from_user, session_name)
                         permission_prompt = f"The user responded: {answer}"
                         print(f"   [PERM] {from_user} → {answer}")
-                        future = executor.submit(
-                            ask_claude, permission_prompt, from_user, sessions,
-                            cwd=cfg.get("cwd"),
-                            permission_mode="auto",
-                        )
+                        def _perm_reply_task():
+                            output, _, _ = ask_claude(
+                                permission_prompt, from_user, sessions,
+                                cwd=cfg.get("cwd"),
+                                permission_mode="auto",
+                            )
+                            return output, False
+
+                        future = executor.submit(_perm_reply_task)
                         future.add_done_callback(
                             lambda f, uid=from_user, c=ctx, st=time.time():
                                 _on_claude_done(f, uid, c, st)
@@ -2259,6 +2270,7 @@ def main_loop(session, sessions, user_config):
                 def _claude_task(uid, txt, cwd, p_mode, cancel_evt):
                     stream_buf = []
                     last_stream_send = [0]
+                    stream_sent = [False]
 
                     def _on_stream(chunk, is_partial):
                         stream_buf.append(chunk)
@@ -2269,6 +2281,7 @@ def main_loop(session, sessions, user_config):
                             if merged.strip():
                                 send_message(base_url, token, uid,
                                              f"[...]\n{merged}", ctx)
+                                stream_sent[0] = True
                             stream_buf.clear()
                             last_stream_send[0] = now
 
@@ -2287,8 +2300,8 @@ def main_loop(session, sessions, user_config):
                             get_active_session_info(sessions, uid)[0],
                             time.time(),
                         )
-                        return "[权限请求已转发，等待确认]"
-                    return output
+                        return "[权限请求已转发，等待确认]", False
+                    return output, stream_sent[0]
 
                 cwd = cfg.get("cwd")
                 cancel_evt = threading.Event()
