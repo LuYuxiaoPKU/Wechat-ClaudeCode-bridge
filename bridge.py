@@ -987,7 +987,14 @@ def handle_command(stripped, from_user, user_config, sessions,
             ext_map = cfg_sess.setdefault("_external", {})
             ext_map[name] = ext_id
             save_user_sessions(sessions)
-            return True, f"[OK] 已接入外部会话: {name}\nUUID: {ext_id}\n\n/cwd 到对应目录后可继续对话"
+            cwd = cfg.get("cwd", os.getcwd())
+            return True, (
+                f"[OK] 已接入外部会话: {name}\n"
+                f"UUID: {ext_id}\n"
+                f"工作目录: {cwd}\n"
+                f"\n"
+                f"如需切换目录，先 /cwd <path> 再发消息继续对话"
+            )
         return True, "[USAGE] /attach <session_uuid> [名称]"
 
     if stripped == "/attach":
