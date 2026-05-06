@@ -141,7 +141,7 @@ docker-compose up -d
 
 ```python
 RATE_LIMIT_S = 5          # 速率限制（秒）
-MAX_MSG_LEN = 2000        # 微信单条消息最大字数
+MAX_MSG_LEN = 50000       # 微信单条消息最大字数
 POLL_TIMEOUT_S = 38       # 长轮询超时
 MAX_WORKERS = 5           # 并发 Claude 调用数
 WEB_PORT = 9876           # Web 控制台端口

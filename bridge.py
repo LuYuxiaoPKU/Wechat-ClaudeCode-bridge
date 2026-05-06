@@ -48,7 +48,7 @@ WATCHDOG_FILE = DATA_DIR / "watchdog.json"
 LOG_FILE = DATA_DIR / "bridge.log"
 POLL_TIMEOUT_S = 15
 RATE_LIMIT_S = 5
-MAX_MSG_LEN = 2000
+MAX_MSG_LEN = 50000
 MAX_WORKERS = 5
 WEB_PORT = 9876
 STREAM_INTERVAL = 3
@@ -756,7 +756,7 @@ def watchdog_thread_fn(base_url, token):
 # ==========================================================================
 
 
-def run_claude_stream(text, cwd=None, extra_args=None, timeout_s=300,
+def run_claude_stream(text, cwd=None, extra_args=None, timeout_s=600,
                       cancel_event=None):
     """
     使用 subprocess.Popen 执行 claude CLI，流式返回增量文本。
@@ -925,8 +925,13 @@ def ask_claude(text, user_id, sessions, cwd=None,
     if has_session:
         output, perm = _call(extra + ["--resume", session_id])
         if "already in use" in output.lower():
-            time.sleep(2)
-            output, perm = _call(extra + ["--resume", session_id])
+            for retry in range(5):
+                delay = 2 * (2 ** retry)  # 2s, 4s, 8s, 16s, 32s
+                log.warning(f"Session 被占用，{delay}s 后重试 ({retry + 1}/5)")
+                time.sleep(delay)
+                output, perm = _call(extra + ["--resume", session_id])
+                if "already in use" not in output.lower():
+                    break
         if perm:
             return output, True, perm
         if output and not output.startswith("[ERR]"):
